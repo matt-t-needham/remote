@@ -1,6 +1,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
+import apps
 import auth
 import commands
 import config
@@ -53,6 +54,10 @@ class FakeShield:
 
     def stop_player(self) -> None:
         self._do("stop_player")
+
+    def now(self):
+        self._do("now")
+        return getattr(self, "state", shield_mod.Now(awake=False))
 
     def is_awake(self) -> bool:
         self._do("is_awake")
@@ -228,6 +233,13 @@ def test_page_served(client):
     assert 'id="open-keyboard"' in r.text and 'fetch("/api/text"' in r.text
     assert f'maxlength="{shield_mod.MAX_TEXT}"' in r.text
     assert "id=\"quit-game\"" in r.text
+    # On the TV: polled, with a label for every media control and a renderer
+    # for every extra the server can name.
+    assert 'id="context"' in r.text and 'fetch("/api/now")' in r.text
+    for name, _ in shield_mod.MEDIA_CONTROLS:
+        assert f'"{name}": "' in r.text
+    for extra in apps.EXTRAS:
+        assert f"{extra}: {{ label:" in r.text
 
 
 ON, GAME, BD = (0x6DD2, 0xFB04), (0x6DD2, 0xF20D), (0x6CD2, 0x738C)
@@ -505,3 +517,49 @@ def test_text_cross_site_refused(client, shield):
     r = client.post("/api/text", json={"text": "dune"}, headers={"sec-fetch-site": "cross-site"})
     assert r.status_code == 403
     assert shield.calls == []
+
+
+def test_media_keys(client, shield):
+    for k in ("play-pause", "previous", "next", "rewind", "fast-forward"):
+        assert client.post(f"/api/key/{k}").status_code == 200
+    assert shield.calls == ["key play-pause", "key previous", "key next", "key rewind", "key fast-forward"]
+
+
+def test_now_playing(client, shield):
+    shield.state = shield_mod.Now(True, "com.spotify.tv.android",
+                                  shield_mod.Media("Chapter 48", None, ["rewind", "play-pause"]))
+    assert client.get("/api/now").json() == {
+        "awake": True,
+        "app": {"package": "com.spotify.tv.android", "label": "Spotify"},
+        "media": {"title": "Chapter 48", "subtitle": None, "controls": ["rewind", "play-pause"]},
+        "extras": ["keyboard"],
+    }
+
+
+def test_now_unknown_app_and_asleep(client, shield):
+    shield.state = shield_mod.Now(True, "com.example.thing", None)
+    assert client.get("/api/now").json() == {
+        "awake": True, "app": {"package": "com.example.thing", "label": "com.example.thing"},
+        "media": None, "extras": []}
+    shield.state = shield_mod.Now(False)
+    assert client.get("/api/now").json() == {"awake": False, "app": None, "media": None, "extras": []}
+
+
+def test_now_shield_failure_is_502(modem, monkeypatch, caplog):
+    monkeypatch.setattr(auth, "access_verified", lambda request: True)
+    c = TestClient(web.create_app(modem, FakeShield(fail=True), FakeSteam(), FakeDizque()))
+    r = c.get("/api/now")
+    assert r.status_code == 502 and "TcpTimeoutException" in r.json()["detail"]
+    assert "FAILED" in caplog.text
+
+
+def test_now_needs_access(modem, shield, monkeypatch):
+    monkeypatch.setattr(auth, "access_verified", lambda request: False)
+    c = TestClient(web.create_app(modem, shield, FakeSteam(), FakeDizque()))
+    assert c.get("/api/now").status_code == 403
+    assert shield.calls == []
+
+
+def test_app_extras_are_ones_the_page_renders():
+    for package, app in apps.APPS.items():
+        assert set(app.extras) <= apps.EXTRAS, package

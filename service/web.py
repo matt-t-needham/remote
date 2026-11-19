@@ -8,6 +8,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel
 
+import apps
 import auth
 import config
 import scenes
@@ -84,6 +85,23 @@ def create_app(modem: Modem, shield: Shield, steam: Steam, dizque: Dizque) -> Fa
             log.error("key %s FAILED: %s", name, e)
             raise HTTPException(status_code=502, detail=str(e)) from None
         return {"key": name}
+
+    @app.get("/api/now", dependencies=[Depends(auth.require_access)])
+    def now():
+        # Polled every few seconds while the page is open: only failures log.
+        try:
+            state = shield.now()
+        except ShieldError as e:
+            log.error("reading what's on the TV FAILED: %s", e)
+            raise HTTPException(status_code=502, detail=str(e)) from None
+        entry = apps.lookup(state.app) if state.app else None
+        media = state.media
+        return {
+            "awake": state.awake,
+            "app": {"package": state.app, "label": entry.label} if entry else None,
+            "media": {"title": media.title, "subtitle": media.subtitle, "controls": media.controls} if media else None,
+            "extras": list(entry.extras) if entry else [],
+        }
 
     @app.post("/api/tv/{state}", dependencies=[Depends(auth.require_control)])
     def tv(state: str):

@@ -8,8 +8,10 @@ failed press drops it and the next press reconnects.
 """
 import logging
 import shlex
+import re
 import threading
 import time
+from dataclasses import dataclass
 
 from adb_shell.adb_device import AdbDeviceTcp
 from adb_shell.auth.sign_pythonrsa import PythonRSASigner
@@ -43,7 +45,106 @@ KEYS = {
     "select": "KEYCODE_DPAD_CENTER",
     "back": "KEYCODE_BACK",
     "home": "KEYCODE_HOME",
+    "play-pause": "KEYCODE_MEDIA_PLAY_PAUSE",
+    "previous": "KEYCODE_MEDIA_PREVIOUS",
+    "next": "KEYCODE_MEDIA_NEXT",
+    "rewind": "KEYCODE_MEDIA_REWIND",
+    "fast-forward": "KEYCODE_MEDIA_FAST_FORWARD",
 }
+
+# PlaybackState action bits (android.media.session.PlaybackState) behind each
+# media key, in the order the page shows them. play-pause: any of PAUSE,
+# PLAY, PLAY_PAUSE.
+MEDIA_CONTROLS = (
+    ("previous", 16),       # SKIP_TO_PREVIOUS
+    ("rewind", 8),
+    ("play-pause", 2 | 4 | 512),
+    ("fast-forward", 64),
+    ("next", 32),           # SKIP_TO_NEXT
+)
+
+
+@dataclass
+class Media:
+    title: str | None
+    subtitle: str | None
+    controls: list[str]
+
+
+@dataclass
+class Session:
+    package: str
+    actions: int = 0
+    title: str | None = None
+    subtitle: str | None = None
+
+
+@dataclass
+class Now:
+    """What the TV shows. When it's asleep nothing else was asked."""
+    awake: bool
+    app: str | None = None
+    media: Media | None = None
+
+
+def front_app(focus: str) -> str | None:
+    """The package of `dumpsys window`'s mCurrentFocus line; None when the
+    focus is null or a window that isn't an app's (e.g. StatusBar)."""
+    m = re.search(r"mCurrentFocus=Window\{\S+ \S+ ([^\s/}]+)/", focus)
+    return m.group(1) if m else None
+
+
+def _description(text: str) -> tuple[str | None, str | None]:
+    """Title and subtitle from MediaDescription's toString, which is always
+    "title, subtitle, description" with "null" for missing parts. Split from
+    the right, so a title's own commas stay in the title."""
+    parts = [None if p == "null" else p for p in text.rsplit(", ", 2)]
+    title = parts[0] if parts else None
+    subtitle = parts[1] if len(parts) > 1 else None
+    return title, subtitle
+
+
+def parse_sessions(dump: str) -> tuple[list[Session], str | None]:
+    """The sessions in `dumpsys media_session`, and the package of its media
+    button session (where a media key goes when no app takes it)."""
+    sessions: list[Session] = []
+    button = None
+    for raw in dump.splitlines():
+        line = raw.strip()
+        if line.startswith("Media button session is "):
+            target = line.removeprefix("Media button session is ")
+            button = target.split("/", 1)[0] if "/" in target else None
+        elif line.startswith("Audio playback"):
+            break
+        elif line.startswith("package="):
+            sessions.append(Session(line.removeprefix("package=")))
+        elif not sessions:
+            continue
+        elif line.startswith("state=PlaybackState"):
+            m = re.search(r"\bactions=(\d+)", line)
+            sessions[-1].actions = int(m.group(1)) if m else 0
+        elif line.startswith("metadata:") and "description=" in line:
+            sessions[-1].title, sessions[-1].subtitle = _description(line.split("description=", 1)[1])
+    return sessions, button
+
+
+def controls(actions: int) -> list[str]:
+    return [name for name, bits in MEDIA_CONTROLS if actions & bits]
+
+
+def choose_media(dump: str, app: str | None) -> Media | None:
+    """The front app's session if it has one, else the media button session's.
+    PlaybackState's state isn't used: stale sessions still claim to play."""
+    sessions, button = parse_sessions(dump)
+    by_package = {}
+    for s in sessions:
+        by_package.setdefault(s.package, s)  # the stack lists the newest first
+    chosen = by_package.get(app) if app else None
+    if chosen is None and button:
+        chosen = by_package.get(button)
+    if chosen is None:
+        return None
+    return Media(chosen.title, chosen.subtitle, controls(chosen.actions))
 
 
 ENTER = "KEYCODE_ENTER"
@@ -112,6 +213,15 @@ class Shield:
         if not self._close_keyboard():
             raise ShieldError("typed and pressed Enter, but the TV's keyboard didn't close")
 
+    def now(self) -> Now:
+        """What's on the TV: whether it's on, the front app, and that app's
+        (or the media button's) session. A few quick dumpsys reads."""
+        state = self._shell("dumpsys power | grep -m1 mWakefulness=").removeprefix("mWakefulness=")
+        if state != "Awake":
+            return Now(awake=False)
+        app = front_app(self._shell("dumpsys window | grep -m1 mCurrentFocus"))
+        return Now(awake=True, app=app, media=choose_media(self._shell("dumpsys media_session"), app))
+
     def _keyboard_shown(self) -> bool:
         return "mInputShown=true" in self._input("dumpsys input_method | grep -m1 mInputShown=")
 
@@ -130,6 +240,14 @@ class Shield:
     def _input(self, command: str) -> str:
         """Run a shell command over the kept-open connection and return its
         output. `input` prints nothing on success and an exception on failure."""
+        out = self._shell(command)
+        if "Exception" in out or "Error" in out:
+            raise ShieldError(f"{command.split(' ', 2)[1]} refused: {out[-200:]}")
+        return out
+
+    def _shell(self, command: str) -> str:
+        """Run a shell command over the kept-open connection; its output
+        unchecked (a dumpsys can contain any title, "Error" included)."""
         with self._key_lock:
             try:
                 if self._key_dev is None:
@@ -140,8 +258,6 @@ class Shield:
                 if dev is not None:
                     dev.close()
                 raise ShieldError(f"ADB to {self._host}:{self._port}: {type(e).__name__}: {e}") from e
-        if "Exception" in out or "Error" in out:
-            raise ShieldError(f"{command.split(' ', 2)[1]} refused: {out[-200:]}")
         return out
 
     def play_stream(self, url: str) -> None:
