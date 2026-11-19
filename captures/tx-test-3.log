@@ -1,0 +1,8 @@
+[D][main:210]: tx: Volume up x3
+[D][main:441]: rx GPIO32: NEC address=0x6DD2 command=0xFD02
+[D][main:441]: rx GPIO32: NEC address=0x6DD2 command=0xFD02
+[D][main:441]: rx GPIO32: NEC address=0x6DD2 command=0xFD02
+[D][main:391]: tx: Volume down x3
+[D][main:441]: rx GPIO32: NEC address=0x6DD2 command=0xFC03
+[D][main:441]: rx GPIO32: NEC address=0x6DD2 command=0xFC03
+[D][main:441]: rx GPIO32: NEC address=0x6DD2 command=0xFC03

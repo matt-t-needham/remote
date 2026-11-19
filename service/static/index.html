@@ -1,0 +1,696 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Remote · bix.computer</title>
+<link rel="stylesheet" href="https://bix.computer/bix.css">
+<link rel="icon" type="image/svg+xml" href="https://bix.computer/favicon.svg">
+<style>
+  :root { --hold-ms: 750ms; }
+  body {
+    margin: 0;
+    background: var(--bix-bg, #1e1e2e);
+    color: var(--bix-text, #cdd6f4);
+    font-family: var(--bix-sans, "Helvetica Neue", Helvetica, Arial, sans-serif);
+  }
+  main { max-width: 28rem; margin: 0 auto; padding: 1.25rem 1rem 3rem; }
+  h1 { font-size: 2.6rem; margin: 1.5rem 0 1.75rem; }
+  section { margin-bottom: 0.9rem; }
+  .row { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.6rem; }
+  .row .wide { grid-column: 1 / -1; }
+  .scenes .row { grid-template-columns: repeat(3, 1fr); }
+  button {
+    position: relative;
+    overflow: hidden;
+    font: 400 1.05rem var(--bix-sans, "Helvetica Neue", Helvetica, Arial, sans-serif);
+    min-height: 3.4rem;
+    border-radius: 10px;
+    border: 1px solid var(--bix-border, #45475a);
+    background: var(--bix-surface, #313244);
+    color: var(--bix-text, #cdd6f4);
+    cursor: pointer;
+    /* A hold, not a tap: no text selection, callout or double-tap zoom. */
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+    touch-action: manipulation;
+  }
+  button.primary {
+    background: var(--bix-accent, #fab387);
+    color: var(--bix-on-accent, #1e1e2e);
+    border-color: transparent;
+    font-weight: 500;
+  }
+  /* Off: filled like TV and Play, in a muted pastel red (Catppuccin red
+     softened into the background), dark text. */
+  button.danger {
+    background: color-mix(in srgb, var(--bix-danger, #f38ba8) 78%, var(--bix-bg, #1e1e2e));
+    color: var(--bix-on-accent, #1e1e2e);
+    border-color: transparent;
+    font-weight: 500;
+  }
+  /* Hold progress: a thin bar across the top that fills over --hold-ms. */
+  button::before {
+    content: "";
+    position: absolute;
+    top: 0; left: 0;
+    height: 4px; width: 100%;
+    background: var(--bix-accent, #fab387);
+    transform: scaleX(0);
+    transform-origin: left;
+  }
+  button.primary::before { background: var(--bix-on-accent, #1e1e2e); }
+  button.danger::before { background: var(--bix-on-accent, #1e1e2e); }
+  button.holding::before { transform: scaleX(1); transition: transform var(--hold-ms) linear; }
+  /* No-delay buttons (volume): no bar; tint while pressed, flash per send. */
+  button[data-hold="0"]::before { display: none; }
+  button[data-hold="0"].pressed { background: var(--bix-surface-2, #45475a); }
+  @keyframes sent {
+    from { background: color-mix(in srgb, var(--bix-accent, #fab387) 40%, var(--bix-surface-2, #45475a)); }
+    to   { background: var(--bix-surface-2, #45475a); }
+  }
+  button.flash { animation: sent 160ms ease-out; }
+  button:focus-visible { outline: 2px solid var(--bix-accent, #fab387); outline-offset: 2px; }
+  button:disabled { opacity: 0.55; cursor: progress; }
+
+  .row.volume { grid-template-columns: repeat(3, 1fr); }
+
+  #status, .screen-status, #kbd-status {
+    min-height: 1.4em;
+    font: 0.85rem var(--bix-mono, ui-monospace, Menlo, monospace);
+    color: var(--bix-text-muted, #a6adc8);
+  }
+  #status.error, .screen-status.error, #kbd-status.error { color: var(--bix-warn, #f9e2af); }
+
+  /* Play: the game list takes the whole screen. Two columns, three rows in
+     view, scrolls for the rest. */
+  .screen {
+    position: fixed;
+    inset: 0;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    background: var(--bix-bg, #1e1e2e);
+  }
+  .screen[hidden] { display: none; }
+  .screen .bar { flex: none; display: flex; align-items: center; padding: 0.75rem 1rem 0.5rem; }
+  .screen .close {
+    min-height: 2.5rem;
+    min-width: 2.75rem;
+    padding: 0 0.75rem;
+    font: 1.1rem var(--bix-mono, ui-monospace, Menlo, monospace);
+  }
+  .screen .close::before { display: none; }
+  .screen .bar { justify-content: space-between; }
+  /* Looks like the "<" button next to it. */
+  .steam-link, .bar-link {
+    display: inline-flex;
+    align-items: center;
+    min-height: 2.5rem;
+    padding: 0 0.75rem;
+    box-sizing: border-box;
+    border-radius: 10px;
+    border: 1px solid var(--bix-border, #45475a);
+    background: var(--bix-surface, #313244);
+    color: var(--bix-text, #cdd6f4);
+    font: 400 1rem var(--bix-sans, "Helvetica Neue", Helvetica, Arial, sans-serif);
+    text-decoration: none;
+  }
+  .bar-link::before { display: none; }
+  .steam-link:focus-visible { outline: 2px solid var(--bix-accent, #fab387); outline-offset: 2px; }
+  .tiles {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    /* Three rows fill the space under the bar. */
+    grid-auto-rows: calc((100% - 2 * 0.6rem) / 3);
+    gap: 0.6rem;
+    padding: 0 1rem 1rem;
+    box-sizing: border-box;
+  }
+  /* Game tile: Steam's art fills the top, the title runs across the bottom
+     (two lines fit). Portrait cover on phones, the wide hero image on wide
+     screens, where the tiles are wide too. */
+  .tiles button {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    padding: 0;
+    text-align: center;
+  }
+  .tiles button::before { z-index: 1; }
+  .tiles picture { flex: 1; min-height: 0; display: flex; }
+  .tiles img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .tiles .title {
+    flex: none;
+    padding: 0.55rem 0.75rem 0.6rem;
+    font-size: 1.05rem;
+    line-height: 1.25;
+    background: var(--bix-surface, #313244);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .tiles .title-only { flex: 1; display: flex; align-items: center; justify-content: center; }
+  /* Channel thumbnails are logos: show them whole, not cropped. */
+  .tiles.logos img { object-fit: contain; padding: 0.75rem; box-sizing: border-box; }
+
+  /* Shield remote: d-pad with OK in the middle, Back and Home underneath. */
+  .dpad {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    grid-template-rows: repeat(3, 1fr) 0.7fr;
+    gap: 0.6rem;
+    padding: 0 1rem 1rem;
+    width: 100%;
+    max-width: 34rem;
+    margin: 0 auto;
+    box-sizing: border-box;
+  }
+  .dpad button { min-height: 0; font-size: 1.2rem; }
+  .dpad .k-up     { grid-area: 1 / 3 / 2 / 5; }
+  .dpad .k-left   { grid-area: 2 / 1 / 3 / 3; }
+  .dpad .k-select { grid-area: 2 / 3 / 3 / 5; }
+  .dpad .k-right  { grid-area: 2 / 5 / 3 / 7; }
+  .dpad .k-down   { grid-area: 3 / 3 / 4 / 5; }
+  .dpad .k-back   { grid-area: 4 / 1 / 5 / 4; }
+  .dpad .k-home   { grid-area: 4 / 4 / 5 / 7; }
+
+  /* Devices: one block per device, its label over its buttons. */
+  .devices {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 0 1rem 1rem;
+    width: 100%;
+    max-width: 34rem;
+    margin: 0 auto;
+    box-sizing: border-box;
+  }
+  .devices section { margin-bottom: 1.1rem; }
+  .devices .bix-label { display: block; margin: 0 0 0.45rem; }
+  .screen-status { flex: none; margin: 0; padding: 0 1rem 1rem; text-align: center; }
+
+  /* Keyboard: a bubble near the top, clear of the phone's keyboard. Typing
+     stays on the phone; Send types it all on the TV, then presses Enter. */
+  .bubble-back {
+    position: fixed;
+    inset: 0;
+    z-index: 20;
+    background: color-mix(in srgb, var(--bix-bg, #1e1e2e) 70%, transparent);
+  }
+  .bubble-back[hidden] { display: none; }
+  .bubble {
+    position: absolute;
+    top: 4.25rem;
+    left: 1rem;
+    right: 1rem;
+    max-width: 30rem;
+    margin: 0 auto;
+    padding: 0.9rem;
+    border-radius: 12px;
+    border: 1px solid var(--bix-border, #45475a);
+    background: var(--bix-surface, #313244);
+  }
+  .bubble input {
+    width: 100%;
+    box-sizing: border-box;
+    min-height: 3rem;
+    padding: 0 0.8rem;
+    border-radius: 8px;
+    border: 1px solid var(--bix-border, #45475a);
+    background: var(--bix-bg, #1e1e2e);
+    color: var(--bix-text, #cdd6f4);
+    /* 16px or more, or iOS zooms the page on focus. */
+    font: 1.1rem var(--bix-sans, "Helvetica Neue", Helvetica, Arial, sans-serif);
+  }
+  .bubble input:focus { outline: 2px solid var(--bix-accent, #fab387); outline-offset: 1px; }
+  .bubble .row { margin-top: 0.6rem; }
+  .bubble button { min-height: 3rem; }
+  .bubble button:not(.primary) { background: var(--bix-bg, #1e1e2e); }
+  .bubble button::before { display: none; }
+  .bubble p { margin: 0.5rem 0 0; min-height: 1.2em; }
+
+  /* Laptop and the Logitech Tap (landscape touch panel, ~1280×800): wider,
+     bigger targets, everything on one screen. */
+  @media (min-width: 48rem) {
+    main { max-width: 60rem; padding: 1.5rem 2rem 2rem; }
+    h1 { margin: 1rem 0 1.25rem; }
+    .scenes button { min-height: 4.5rem; font-size: 1.25rem; }
+    button { min-height: 3.75rem; }
+    .tiles { padding: 0 2rem 1.5rem; }
+    .screen .bar { padding: 1rem 2rem 0.75rem; }
+    .tiles .title { font-size: 1.2rem; }
+  }
+  @media (min-width: 48rem) and (max-height: 50rem) {
+    h1 { font-size: 2.2rem; margin: 0.5rem 0 1rem; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <div class="bix-site"><a href="https://bix.computer/">bix.computer</a><span class="sep">/</span>remote</div>
+  <h1 class="bix-title">Remote<i class="bix-dot">.</i></h1>
+
+  <section class="scenes" aria-label="Scenes">
+    <div class="row">
+      <button class="primary" data-scene="tv">TV</button>
+      <button class="primary" type="button" id="play" aria-haspopup="dialog" aria-controls="games">Games</button>
+      <button class="primary" id="quit-game" data-quit hidden>Quit game</button>
+      <button class="primary" type="button" id="open-channels" aria-haspopup="dialog" aria-controls="channels">Channels</button>
+      <button class="danger wide" data-scene="off">Off</button>
+    </div>
+  </section>
+
+  <section aria-label="Volume">
+    <div class="row volume">
+      <button class="down" data-cmd="volume-down" data-hold="0" data-repeat data-repeat-delay="300" data-inflight="2">Vol. Down</button>
+      <button class="mute" data-cmd="mute" data-hold="350">Mute</button>
+      <button class="up" data-cmd="volume-up" data-hold="0" data-repeat data-repeat-delay="300" data-inflight="2">Vol. Up</button>
+    </div>
+  </section>
+
+  <section>
+    <div class="row">
+      <button type="button" id="open-remote" aria-haspopup="dialog" aria-controls="remote">Remote Control</button>
+      <button type="button" id="open-devices" aria-haspopup="dialog" aria-controls="devices">Devices</button>
+    </div>
+  </section>
+
+  <hr class="bix-rule">
+  <p id="status" role="status" aria-live="polite"></p>
+</main>
+
+<div id="games" class="screen" role="dialog" aria-modal="true" aria-label="Games" hidden>
+  <div class="bar">
+    <button type="button" class="close" aria-label="Close">&lt;</button>
+    <a class="steam-link" href="https://steam.bix.computer/">Steam Controls</a>
+  </div>
+  <div id="games-list" class="tiles"></div>
+</div>
+
+<div id="channels" class="screen" role="dialog" aria-modal="true" aria-label="Channels" hidden>
+  <div class="bar"><button type="button" class="close" aria-label="Close">&lt;</button></div>
+  <div id="channels-list" class="tiles logos"></div>
+</div>
+
+<div id="remote" class="screen" role="dialog" aria-modal="true" aria-label="Remote control" hidden>
+  <div class="bar">
+    <button type="button" class="close" aria-label="Close">&lt;</button>
+    <button type="button" class="bar-link" id="open-keyboard" aria-haspopup="dialog" aria-controls="keyboard">Keyboard</button>
+  </div>
+  <div class="dpad">
+    <button class="k-up" data-key="up" data-hold="0" data-repeat="150" data-repeat-delay="400">Up</button>
+    <button class="k-left" data-key="left" data-hold="0" data-repeat="150" data-repeat-delay="400">Left</button>
+    <button class="k-select primary" data-key="select" data-hold="0">OK</button>
+    <button class="k-right" data-key="right" data-hold="0" data-repeat="150" data-repeat-delay="400">Right</button>
+    <button class="k-down" data-key="down" data-hold="0" data-repeat="150" data-repeat-delay="400">Down</button>
+    <button class="k-back" data-key="back" data-hold="0">Back</button>
+    <button class="k-home" data-key="home" data-hold="0">Home</button>
+  </div>
+  <p class="screen-status" role="status" aria-live="polite"></p>
+</div>
+
+<div id="devices" class="screen" role="dialog" aria-modal="true" aria-label="Devices" hidden>
+  <div class="bar"><button type="button" class="close" aria-label="Close">&lt;</button></div>
+  <div class="devices">
+    <section aria-label="TV">
+      <span class="bix-label">TV (through the Shield)</span>
+      <div class="row">
+        <button data-tv="on" data-label="TV on" data-hold="350">On</button>
+        <button data-tv="off" data-label="TV off" data-hold="350">Off</button>
+      </div>
+    </section>
+    <section aria-label="Amp">
+      <span class="bix-label">Amp</span>
+      <div class="row">
+        <button data-cmd="on" data-label="Amp on" data-hold="350">On</button>
+        <button data-cmd="off" data-label="Amp off" data-hold="350">Off</button>
+      </div>
+    </section>
+    <section aria-label="Amp input">
+      <span class="bix-label">Amp input</span>
+      <div class="row">
+        <button data-cmd="shield" data-label="Amp input Shield" data-hold="350">Shield</button>
+        <button data-cmd="game" data-label="Amp input Game" data-hold="350">Game</button>
+      </div>
+    </section>
+  </div>
+  <p class="screen-status" role="status" aria-live="polite"></p>
+</div>
+
+<div id="keyboard" class="bubble-back" hidden>
+  <form class="bubble" role="dialog" aria-modal="true" aria-label="Type on the TV" autocomplete="off">
+    <input id="kbd-text" type="text" maxlength="200" enterkeyhint="send"
+           autocapitalize="off" autocorrect="off" spellcheck="false"
+           placeholder="Type, then Send" aria-label="Text to type on the TV">
+    <div class="row">
+      <button type="button" id="kbd-cancel">Cancel</button>
+      <button type="submit" class="primary" id="kbd-send">Send</button>
+    </div>
+    <p id="kbd-status" role="status" aria-live="polite"></p>
+  </form>
+</div>
+
+<script>
+  const HOLD_MS = 750;   // default hold; a button's data-hold overrides it (0 = fires on press)
+  const REPEAT_MS = 25;  // volume Up/Down while held: how often to top up the queue
+  // Every status line shows the latest result: the main page's, and the one on
+  // each full-screen page, which covers the main page's.
+  const statuses = document.querySelectorAll("#status, .screen-status");
+  function show(text, isError) {
+    for (const el of statuses) {
+      el.textContent = text;
+      el.classList.toggle("error", !!isError);
+    }
+  }
+
+  function pathFor(b) {
+    if (b.dataset.play) return "/api/play/" + encodeURIComponent(b.dataset.play);
+    if (b.dataset.watch) return "/api/watch/" + encodeURIComponent(b.dataset.watch);
+    if (b.hasAttribute("data-quit")) return "/api/quit-game";
+    if (b.dataset.key) return "/api/key/" + b.dataset.key;
+    if (b.dataset.tv) return "/api/tv/" + b.dataset.tv;
+    if (b.dataset.scene) return "/api/scene/" + b.dataset.scene;
+    return "/api/" + b.dataset.cmd;
+  }
+
+  async function send(b, lock, quiet) {
+    if (lock) b.disabled = true;
+    try {
+      const r = await fetch(pathFor(b), { method: "POST" });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) show("Not sent: " + (body.detail || r.status), true);
+      else if (!quiet) show("Sent: " + (b.dataset.label || b.textContent) + " (" + new Date().toLocaleTimeString() + ")", false);
+      return r.ok;
+    } catch (e) {
+      show("Not sent: " + e.message, true);
+      return false;
+    } finally {
+      if (lock) b.disabled = false;
+    }
+  }
+
+  const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
+
+  // Press and hold for the button's hold time to send; letting go (or sliding
+  // off) earlier cancels and sends nothing. data-hold="0" fires on press.
+  // data-repeat buttons keep sending until released (every data-repeat ms, or
+  // REPEAT_MS; after data-repeat-delay ms for the first repeat, like a real
+  // remote's d-pad), each send waiting for the last, flashing on each.
+  // data-inflight="n" keeps up to n sends queued instead, so the server always
+  // has the next one ready (volume: the IR modem sends frames back to back, at
+  // the amp remote's own rate, one per 108 ms, instead of one per round trip).
+  // Letting go can overshoot by n - 1 steps.
+  function bindHold(b, afterSend) {
+    let timer = null;
+    let held = false;
+    const repeat = b.hasAttribute("data-repeat");
+    const repeatMs = Number(b.dataset.repeat) || REPEAT_MS;
+    const repeatDelay = Number(b.dataset.repeatDelay) || 0;
+    const inflight = Number(b.dataset.inflight) || 1;
+    const holdMs = b.dataset.hold !== undefined ? Number(b.dataset.hold) : HOLD_MS;
+    if (holdMs) b.style.setProperty("--hold-ms", holdMs + "ms");
+    const flash = () => {
+      b.classList.remove("flash");
+      void b.offsetWidth;  // restart the animation
+      b.classList.add("flash");
+    };
+    const fire = async () => {
+      if (!repeat) {
+        const ok = await send(b, true);
+        if (ok && !holdMs) flash();
+        if (afterSend) afterSend(ok);
+        return;
+      }
+      if (inflight > 1) {
+        let pending = 0;
+        let failed = false;
+        const one = async (quiet) => {
+          pending++;
+          const ok = await send(b, false, quiet);
+          pending--;
+          if (ok) flash(); else failed = true;
+        };
+        one(false);
+        await sleep(Math.max(repeatDelay, repeatMs));
+        while (held && !failed) {
+          if (pending < inflight) one(true);
+          await sleep(repeatMs);
+        }
+        return;
+      }
+      let first = true;
+      while (held) {
+        const t0 = performance.now();
+        const ok = await send(b, false, !first);
+        if (!ok) break;
+        flash();
+        await sleep(Math.max(0, (first ? Math.max(repeatDelay, repeatMs) : repeatMs) - (performance.now() - t0)));
+        first = false;
+      }
+    };
+    const start = () => {
+      if (timer || held || b.disabled) return;
+      held = true;
+      b.classList.add("pressed");
+      if (!holdMs) { fire(); return; }
+      b.classList.add("holding");
+      timer = setTimeout(() => {
+        timer = null;
+        b.classList.remove("holding");
+        fire();
+      }, holdMs);
+    };
+    const cancel = () => {
+      held = false;
+      b.classList.remove("pressed");
+      if (!timer) return;
+      clearTimeout(timer);
+      timer = null;
+      b.classList.remove("holding");
+    };
+    b.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
+      b.setPointerCapture(e.pointerId);
+      start();
+    });
+    b.addEventListener("pointerup", cancel);
+    b.addEventListener("pointercancel", cancel);
+    b.addEventListener("lostpointercapture", cancel);
+    // Pointer capture keeps events on the button, so check the finger is
+    // still over it.
+    b.addEventListener("pointermove", (e) => {
+      const r = b.getBoundingClientRect();
+      if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) cancel();
+    });
+    b.addEventListener("contextmenu", (e) => e.preventDefault());
+    // Keyboard: hold Enter or Space.
+    b.addEventListener("keydown", (e) => {
+      if ((e.key === "Enter" || e.key === " ") && !e.repeat) { e.preventDefault(); start(); }
+    });
+    b.addEventListener("keyup", (e) => {
+      if (e.key === "Enter" || e.key === " ") cancel();
+    });
+    b.addEventListener("blur", cancel);
+  }
+  document.querySelectorAll("main button[data-cmd], main button[data-scene], #remote button[data-key], #devices button[data-cmd], #devices button[data-tv]").forEach((b) => bindHold(b));
+
+  // Play and Quit game share a slot: while Steam is running a game, the slot
+  // quits it instead. Checked on load, every 15 s while the page is visible,
+  // and after each Play or Quit.
+  const playSlot = document.getElementById("play");
+  const quitBtn = document.getElementById("quit-game");
+  bindHold(quitBtn, () => refreshRunning());
+  function setRunning(running) {
+    playSlot.hidden = !!running;
+    quitBtn.hidden = !running;
+    if (running) quitBtn.title = running.name;
+  }
+  async function refreshRunning() {
+    try {
+      const r = await fetch("/api/games");
+      if (!r.ok) return;  // the Play button shows the error when it's pressed
+      setRunning((await r.json()).running);
+    } catch (e) {
+      // Offline for a moment: keep the current button; the next check retries.
+    }
+  }
+  refreshRunning();
+  setInterval(() => { if (!document.hidden) refreshRunning(); }, 15000);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) refreshRunning(); });
+
+  // Play: a plain tap opens the game list (it sends nothing). Games come most
+  // recently played first; holding one launches it on the HTPC and runs the
+  // GAME scene, then the list closes.
+  // Full-screen pages (game list, Shield remote): "<" or Escape closes them.
+  let opener = null;
+  function openScreen(el, from) {
+    opener = from;
+    el.hidden = false;
+    el.querySelector(".close").focus();
+  }
+  function closeScreens() {
+    document.querySelectorAll(".screen").forEach((el) => { el.hidden = true; });
+    if (opener) opener.focus();
+  }
+  document.querySelectorAll(".screen .close").forEach((c) => c.addEventListener("click", closeScreens));
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    if (!kbd.hidden) closeKeyboard(); else closeScreens();
+  });
+  const openRemote = document.getElementById("open-remote");
+  openRemote.addEventListener("click", () => openScreen(document.getElementById("remote"), openRemote));
+  const openDevices = document.getElementById("open-devices");
+  openDevices.addEventListener("click", () => openScreen(document.getElementById("devices"), openDevices));
+
+  // Keyboard: the text is typed into the bubble on the phone, then sent in one
+  // go; the TV types it into its focused field and presses Enter. Focus has to
+  // happen inside the tap for the phone's keyboard to come up.
+  const kbd = document.getElementById("keyboard");
+  const kbdForm = kbd.querySelector("form");
+  const kbdText = document.getElementById("kbd-text");
+  const kbdSend = document.getElementById("kbd-send");
+  const kbdStatus = document.getElementById("kbd-status");
+  const kbdOpen = document.getElementById("open-keyboard");
+  function kbdShow(text, isError) {
+    kbdStatus.textContent = text;
+    kbdStatus.classList.toggle("error", !!isError);
+  }
+  function closeKeyboard() {
+    kbd.hidden = true;
+    kbdText.blur();
+    kbdOpen.focus();
+  }
+  kbdOpen.addEventListener("click", () => {
+    kbdShow("", false);
+    kbd.hidden = false;
+    kbdText.focus();
+    kbdText.select();
+  });
+  document.getElementById("kbd-cancel").addEventListener("click", closeKeyboard);
+  kbd.addEventListener("click", (e) => { if (e.target === kbd) closeKeyboard(); });
+  kbdForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const text = kbdText.value;
+    if (!text.trim() || kbdSend.disabled) return;
+    kbdSend.disabled = true;
+    kbdShow("Typing on the TV…", false);
+    try {
+      const r = await fetch("/api/text", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        // Keep the text so it can be fixed and sent again.
+        // 400: refused before anything reached the TV. Otherwise some of it may have.
+        const what = r.status === 400 ? "Not sent: " : "Didn't finish: ";
+        kbdShow(what + (typeof body.detail === "string" ? body.detail : r.status), true);
+        return;
+      }
+      kbdText.value = "";
+      closeKeyboard();
+      show("Typed " + body.typed + " characters and Enter (" + new Date().toLocaleTimeString() + ")", false);
+    } catch (err) {
+      kbdShow("Not sent: " + err.message, true);
+    } finally {
+      kbdSend.disabled = false;
+    }
+  });
+
+  const playBtn = document.getElementById("play");
+  const games = document.getElementById("games");
+  const gamesList = document.getElementById("games-list");
+  const closeGames = closeScreens;
+  playBtn.addEventListener("click", async () => {
+    playBtn.disabled = true;
+    try {
+      const r = await fetch("/api/games");
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) { show("Couldn't load games: " + (body.detail || r.status), true); return; }
+      gamesList.replaceChildren();
+      for (const g of body.games) {
+        const b = document.createElement("button");
+        b.dataset.play = g.appid;
+        b.setAttribute("aria-label", g.name);
+        const art = "/api/art/" + encodeURIComponent(g.appid) + "/";
+        const pic = document.createElement("picture");
+        const wide = document.createElement("source");
+        wide.media = "(min-width: 48rem)";
+        wide.srcset = art + "wide";
+        const img = document.createElement("img");
+        img.src = art + "cover";
+        img.alt = "";
+        img.loading = "lazy";
+        // No cached art: the title fills the tile instead.
+        img.addEventListener("error", () => { pic.remove(); title.classList.add("title-only"); });
+        pic.append(wide, img);
+        const title = document.createElement("span");
+        title.className = "title";
+        title.textContent = g.name;
+        b.append(pic, title);
+        // Either way the list closes and the result shows on the main screen;
+        // the slot turns into Quit game once Steam reports the game running.
+        bindHold(b, () => { closeGames(); setTimeout(refreshRunning, 5000); });
+        gamesList.append(b);
+      }
+      gamesList.scrollTop = 0;
+      openScreen(games, playBtn);
+    } catch (e) {
+      show("Couldn't load games: " + e.message, true);
+    } finally {
+      playBtn.disabled = false;
+    }
+  });
+
+  // Channels: dizquetv's channels, its thumbnails and names; holding one runs
+  // the TV steps and plays it in VLC on the Shield.
+  const chBtn = document.getElementById("open-channels");
+  const chScreen = document.getElementById("channels");
+  const chList = document.getElementById("channels-list");
+  chBtn.addEventListener("click", async () => {
+    chBtn.disabled = true;
+    try {
+      const r = await fetch("/api/channels");
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) { show("Couldn't load channels: " + (body.detail || r.status), true); return; }
+      chList.replaceChildren();
+      for (const c of body.channels) {
+        const b = document.createElement("button");
+        b.dataset.watch = String(c.number);
+        b.setAttribute("aria-label", c.name);
+        const pic = document.createElement("picture");
+        const img = document.createElement("img");
+        img.src = "/api/channel-art/" + encodeURIComponent(c.number);
+        img.alt = "";
+        img.loading = "lazy";
+        // No thumbnail: the name fills the tile instead.
+        img.addEventListener("error", () => { pic.remove(); title.classList.add("title-only"); });
+        pic.append(img);
+        const title = document.createElement("span");
+        title.className = "title";
+        title.textContent = c.name;
+        b.append(pic, title);
+        bindHold(b, closeScreens);  // the result shows on the main screen
+        chList.append(b);
+      }
+      chList.scrollTop = 0;
+      openScreen(chScreen, chBtn);
+    } catch (e) {
+      show("Couldn't load channels: " + e.message, true);
+    } finally {
+      chBtn.disabled = false;
+    }
+  });
+</script>
+</body>
+</html>

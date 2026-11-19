@@ -1,0 +1,6 @@
+.venv/
+.esphome/
+.pio-core/
+firmware/.pio/
+__pycache__/
+.pytest_cache/

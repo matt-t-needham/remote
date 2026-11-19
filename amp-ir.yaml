@@ -1,0 +1,30 @@
+# M5Stack ATOM Lite + IR Unit on the Grove port.
+# IR Unit pins (confirmed 2026-10-29): receiver GPIO32, emitter GPIO26.
+# Idle build: receiver logging + transmitter, nothing sent at boot.
+# Codes and test results are in README.md. No Wi-Fi yet.
+
+esphome:
+  name: amp-ir
+
+esp32:
+  board: m5stack-atom
+  framework:
+    type: esp-idf
+
+logger:
+  level: DEBUG
+
+remote_receiver:
+  id: rx
+  pin:
+    number: GPIO32
+    inverted: true
+  on_nec:
+    - logger.log:
+        format: "rx GPIO32: NEC address=0x%04X command=0x%04X"
+        args: [x.address, x.command]
+
+remote_transmitter:
+  id: tx
+  pin: GPIO26
+  carrier_duty_percent: 50%

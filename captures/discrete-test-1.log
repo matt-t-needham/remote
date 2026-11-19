@@ -1,0 +1,5 @@
+18:56:09 [D][main:209]: tx: Off (candidate 210.108/71)
+18:56:09 [D][main:356]: tx: Off again
+18:56:09 [D][main:374]: tx: On (candidate 210.109/4)
+18:56:09 [D][main:392]: tx: On again
+18:56:09 [D][main:410]: tx: done

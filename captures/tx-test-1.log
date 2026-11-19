@@ -1,0 +1,6 @@
+[W][app:189]: Set flash_chip: generic under esp32 > framework > advanced to save IRAM
+[W][app:228]: Bootloader supports SRAM1 as IRAM (+40KB). Set sram1_as_iram: true under esp32 > framework > advanced
+[D][main:154]: tx: Mute
+[D][main:317]: rx GPIO32: NEC address=0x6DD2 command=0xFA05
+[D][main:301]: tx: Mute (unmute)
+[D][main:317]: rx GPIO32: NEC address=0x6DD2 command=0xFA05
