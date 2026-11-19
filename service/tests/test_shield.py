@@ -300,17 +300,18 @@ SPOTIFY = shield.Media("Chapter 48", "The Girls of Good Fortune: A Novel", ["rew
 
 @pytest.mark.parametrize("app, media", [
     ("com.spotify.tv.android", SPOTIFY),        # the front app's own session
-    ("com.spocky.projengmenu", WATCH),          # no session: the media button's
+    ("com.plexapp.android", None),              # no session: not Watch's, behind it
+    ("com.spocky.projengmenu", WATCH),          # the launcher: the media button's
     (None, WATCH),
 ])
-def test_media_is_front_apps_session_else_media_buttons(app, media):
+def test_media_is_front_apps_own_session_else_media_buttons_behind_launcher(app, media):
     assert shield.choose_media(MEDIA_SESSIONS, app) == media
 
 
-def test_no_media_without_front_or_button_session():
+def test_no_media_behind_launcher_without_button_session():
     no_button = MEDIA_SESSIONS.replace("Media button session is computer.bix.materialious/capacitor-music-controls-media-session",
                                        "Media button session is null")
-    assert shield.choose_media(no_button, "com.plexapp.android") is None
+    assert shield.choose_media(no_button, "com.spocky.projengmenu") is None
 
 
 @pytest.mark.parametrize("description, title, subtitle", [

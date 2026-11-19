@@ -24,6 +24,8 @@ from adb_shell.exceptions import (
     TcpTimeoutException,
 )
 
+import apps
+
 log = logging.getLogger("remote.shield")
 
 ADB_ERRORS = (
@@ -142,15 +144,18 @@ def controls(actions: int) -> list[str]:
 
 
 def choose_media(dump: str, app: str | None) -> Media | None:
-    """The front app's session if it has one, else the media button session's.
+    """The front app's own session. Only with no front app, or the launcher
+    in front, the media button session's: another app's session behind a
+    front app (Watch's behind Plex) isn't what that app is playing.
     PlaybackState's state isn't used: stale sessions still claim to play."""
     sessions, button = parse_sessions(dump)
     by_package = {}
     for s in sessions:
         by_package.setdefault(s.package, s)  # the stack lists the newest first
-    chosen = by_package.get(app) if app else None
-    if chosen is None and button:
-        chosen = by_package.get(button)
+    if app and not apps.lookup(app).launcher:
+        chosen = by_package.get(app)
+    else:
+        chosen = by_package.get(button) if button else None
     if chosen is None:
         return None
     return Media(chosen.title, chosen.subtitle, controls(chosen.actions))
