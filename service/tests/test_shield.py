@@ -272,3 +272,97 @@ def test_type_text_adb_failure_drops_connection(key, monkeypatch):
     assert dev.closed
     sh.type_text("dune")
     assert dev.connects == 2
+
+
+# `dumpsys media_session` on the Shield, 2026-11-18 (abridged).
+MEDIA_SESSIONS = """\
+  Media button session is computer.bix.materialious/capacitor-music-controls-media-session (userId=0)
+  Sessions Stack - have 2 sessions:
+    capacitor-music-controls-media-session computer.bix.materialious/capacitor-music-controls-media-session (userId=0)
+      ownerPid=32717, ownerUid=10114, userId=0
+      package=computer.bix.materialious
+      active=true
+      state=PlaybackState {state=3, position=0, buffered position=0, speed=1.0, updated=1908088229, actions=3586, custom actions=[], active item id=-1, error=null}
+      metadata:size=6, description=ADHD: a cultural analysis, Meditations for the anxious mind, null
+      queueTitle=null, size=0
+
+    androidx.media3.session.id. com.spotify.tv.android/androidx.media3.session.id. (userId=0)
+      package=com.spotify.tv.android
+      active=true
+      state=PlaybackState {state=3, position=365, buffered position=0, speed=1.1, updated=1907840613, actions=7057354, custom actions=[Action:mName='Seek 15 seconds back, ...], active item id=0, error=null}
+      metadata:size=21, description=Chapter 48, The Girls of Good Fortune: A Novel, null
+
+Audio playback (lastly played comes first)
+"""
+WATCH = shield.Media("ADHD: a cultural analysis", "Meditations for the anxious mind", ["play-pause"])
+SPOTIFY = shield.Media("Chapter 48", "The Girls of Good Fortune: A Novel", ["rewind", "play-pause", "fast-forward"])
+
+
+@pytest.mark.parametrize("app, media", [
+    ("com.spotify.tv.android", SPOTIFY),        # the front app's own session
+    ("com.spocky.projengmenu", WATCH),          # no session: the media button's
+    (None, WATCH),
+])
+def test_media_is_front_apps_session_else_media_buttons(app, media):
+    assert shield.choose_media(MEDIA_SESSIONS, app) == media
+
+
+def test_no_media_without_front_or_button_session():
+    no_button = MEDIA_SESSIONS.replace("Media button session is computer.bix.materialious/capacitor-music-controls-media-session",
+                                       "Media button session is null")
+    assert shield.choose_media(no_button, "com.plexapp.android") is None
+
+
+@pytest.mark.parametrize("description, title, subtitle", [
+    ("Chapter 48, Part 2, The Girls of Good Fortune, null", "Chapter 48, Part 2", "The Girls of Good Fortune"),
+    ("Dune, null, null", "Dune", None),
+    ("null, null, null", None, None),
+])
+def test_description_title_keeps_its_commas_and_drops_nulls(description, title, subtitle):
+    dump = MEDIA_SESSIONS.replace("ADHD: a cultural analysis, Meditations for the anxious mind, null", description)
+    media = shield.choose_media(dump, "computer.bix.materialious")
+    assert (media.title, media.subtitle) == (title, subtitle)
+
+
+def test_controls_in_display_order():
+    assert shield.controls(16 | 8 | 4 | 64 | 32 | 1) == ["previous", "rewind", "play-pause", "fast-forward", "next"]
+    assert shield.controls(1) == []  # STOP alone has no button
+
+
+@pytest.mark.parametrize("focus, app", [
+    ("  mCurrentFocus=Window{fe6544a u0 computer.bix.materialious/us.materialio.app.MainActivity}",
+     "computer.bix.materialious"),
+    ("  mCurrentFocus=Window{3c1d0e2 u0 StatusBar}", None),
+    ("  mCurrentFocus=null", None),
+])
+def test_front_app(focus, app):
+    assert shield.front_app(focus) == app
+
+
+class NowDevice(FakeDevice):
+    def __init__(self, power, title="ADHD: a cultural analysis"):
+        super().__init__([power])
+        self.title = title
+
+    def shell(self, cmd):
+        out = super().shell(cmd)
+        if cmd.startswith("dumpsys window"):
+            return "  mCurrentFocus=Window{fe6544a u0 computer.bix.materialious/us.materialio.app.MainActivity}\n"
+        if cmd == "dumpsys media_session":
+            return MEDIA_SESSIONS.replace("ADHD: a cultural analysis", self.title)
+        return out
+
+
+def test_now_asleep_asks_nothing_else(key, monkeypatch):
+    dev = use(monkeypatch, NowDevice("Dozing"))
+    assert Shield("192.168.0.36", key).now() == shield.Now(awake=False)
+    assert len(dev.commands) == 1
+
+
+def test_now_awake_reads_app_and_media_on_the_kept_connection(key, monkeypatch):
+    # A title saying "Error" is just a title, not a refused command.
+    dev = use(monkeypatch, NowDevice("Awake", title="Error 404: a documentary"))
+    now = Shield("192.168.0.36", key).now()
+    assert now.awake and now.app == "computer.bix.materialious"
+    assert now.media == shield.Media("Error 404: a documentary", "Meditations for the anxious mind", ["play-pause"])
+    assert dev.connects == 1 and not dev.closed
