@@ -366,3 +366,91 @@ def test_now_awake_reads_app_and_media_on_the_kept_connection(key, monkeypatch):
     assert now.awake and now.app == "computer.bix.materialious"
     assert now.media == shield.Media("Error 404: a documentary", "Meditations for the anxious mind", ["play-pause"])
     assert dev.connects == 1 and not dev.closed
+
+
+# `am broadcast` to Watch's remote receiver, as the Shield prints it.
+AM_HEAD = ("Broadcasting: Intent { act=computer.bix.materialious.REMOTE flg=0x400000 "
+           "pkg=computer.bix.materialious (has extras) }\n")
+STATE_JSON = ('{"player":true,"speed":1.25,"speeds":[0.5,0.75,1,1.25,1.5,1.75,2],'
+              '"quality":"auto","qualities":[2160,1440,1080,720,480,360]}')
+
+
+@pytest.mark.parametrize("out, code, data", [
+    (AM_HEAD + f'Broadcast completed: result=1, data="{STATE_JSON}"', 1, STATE_JSON),
+    (AM_HEAD + "Broadcast completed: result=0", 0, None),
+    # A reason may itself contain quotes: am doesn't escape them.
+    (AM_HEAD + 'Broadcast completed: result=3, data="no "video" playing"', 3, 'no "video" playing'),
+])
+def test_parse_broadcast(out, code, data):
+    assert shield.parse_broadcast(out) == (code, data)
+
+
+def test_parse_broadcast_without_result_is_error():
+    with pytest.raises(ShieldError, match="no result"):
+        shield.parse_broadcast("Error: Unknown option: --es")
+
+
+class AmDevice(FakeDevice):
+    """Answers `am broadcast` with `reply` (after am's header line)."""
+
+    def __init__(self, reply):
+        super().__init__(["Awake"])
+        self.reply = reply
+
+    def shell(self, cmd):
+        super().shell(cmd)
+        return AM_HEAD + self.reply if cmd.startswith("am broadcast") else ""
+
+
+def test_watch_player_reads_state(key, monkeypatch):
+    dev = use(monkeypatch, AmDevice(f'Broadcast completed: result=1, data="{STATE_JSON}"'))
+    state = Shield("192.168.0.36", key).watch_player()
+    assert state == {"player": True, "speed": 1.25, "speeds": [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2],
+                     "quality": "auto", "qualities": [2160, 1440, 1080, 720, 480, 360]}
+    assert dev.commands == ["am broadcast -a computer.bix.materialious.REMOTE -p computer.bix.materialious "
+                            "--es cmd state"]
+
+
+@pytest.mark.parametrize("reply, result", [
+    ("Broadcast completed: result=0", None),  # not running, or no receiver
+    ('Broadcast completed: result=1, data="{"player":false}"', {"player": False}),
+])
+def test_watch_player_absent_or_closed(key, monkeypatch, reply, result):
+    use(monkeypatch, AmDevice(reply))
+    assert Shield("192.168.0.36", key).watch_player() == result
+
+
+@pytest.mark.parametrize("reply, match", [
+    ('Broadcast completed: result=3, data="busy"', "busy"),
+    ('Broadcast completed: result=1, data="{"player":tru"', "unreadable"),
+    ('Broadcast completed: result=1, data="{"player":true,"speed":1}"', "unexpected player state"),
+    ('Broadcast completed: result=1, data="[]"', "unexpected state"),
+])
+def test_watch_player_bad_replies_are_errors(key, monkeypatch, reply, match):
+    use(monkeypatch, AmDevice(reply))
+    with pytest.raises(ShieldError, match=match):
+        Shield("192.168.0.36", key).watch_player()
+
+
+def test_watch_player_set_quotes_value(key, monkeypatch):
+    dev = use(monkeypatch, AmDevice('Broadcast completed: result=1, data="{"player":true}"'))
+    sh = Shield("192.168.0.36", key)
+    sh.watch_player_set("speed", "1.25")
+    sh.watch_player_set("quality", "1080; reboot")
+    assert dev.commands == [
+        "am broadcast -a computer.bix.materialious.REMOTE -p computer.bix.materialious --es cmd speed --es value 1.25",
+        "am broadcast -a computer.bix.materialious.REMOTE -p computer.bix.materialious "
+        "--es cmd quality --es value '1080; reboot'",
+    ]
+
+
+def test_watch_player_set_refused_carries_reason(key, monkeypatch):
+    use(monkeypatch, AmDevice('Broadcast completed: result=3, data="no such speed: 3"'))
+    with pytest.raises(shield.Refused, match="no such speed: 3"):
+        Shield("192.168.0.36", key).watch_player_set("speed", "3")
+
+
+def test_watch_player_set_unheard_is_shield_error(key, monkeypatch):
+    use(monkeypatch, AmDevice("Broadcast completed: result=0"))
+    with pytest.raises(ShieldError, match="Watch isn't running"):
+        Shield("192.168.0.36", key).watch_player_set("speed", "1")

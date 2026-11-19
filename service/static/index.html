@@ -56,6 +56,12 @@
   .ctx .row.media button { font-size: 0.95rem; padding: 0 0.25rem; }
   .ctx .row.media .wide { order: 1; }
   .row { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.6rem; }
+  /* Watch's player: speed and quality, one compact button per choice; the
+     current one is filled (and aria-pressed). */
+  .ctx .choice-label { margin: 0.75rem 0 0.35rem; }
+  .ctx .row.choices { margin-top: 0; grid-template-columns: repeat(auto-fill, minmax(4.2rem, 1fr)); gap: 0.4rem; }
+  .ctx .row.choices button { min-height: 2.75rem; font-size: 0.95rem; padding: 0 0.25rem; }
+  .ctx-remote .choice-label { margin-top: 0.5rem; }
   .row .wide { grid-column: 1 / -1; }
   .scenes .row { grid-template-columns: repeat(3, 1fr); }
   button {
@@ -790,6 +796,48 @@
     p.textContent = text;
     return p;
   }
+  // Watch's player settings: a caption over one button per option, each
+  // [value sent, label, value as /api/now reports it]; the current one filled.
+  function choices(kind, caption, current, options) {
+    const group = document.createElement("div");
+    group.setAttribute("role", "group");
+    group.setAttribute("aria-label", caption);
+    const label = document.createElement("span");
+    label.className = "bix-label choice-label";
+    label.textContent = caption;
+    const row = document.createElement("div");
+    row.className = "row choices";
+    for (const [value, text, reported] of options) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.dataset.hold = "0";
+      b.textContent = text;
+      const on = reported === current;
+      if (on) b.className = "primary";
+      b.setAttribute("aria-pressed", String(on));
+      b.addEventListener("click", () => setPlayer(b, kind, value, caption + " " + text));
+      row.append(b);
+    }
+    group.append(label, row);
+    return group;
+  }
+  async function setPlayer(b, kind, value, what) {
+    if (b.disabled) return;
+    b.disabled = true;
+    try {
+      const r = await fetch("/api/watch-player/" + kind + "?value=" + encodeURIComponent(value), { method: "POST" });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) show("Not set: " + (typeof body.detail === "string" ? body.detail : r.status), true);
+      else {
+        show("Set: " + what + " (" + new Date().toLocaleTimeString() + ")", false);
+        refreshNowSoon();  // Watch answers with the state from before the change
+      }
+    } catch (e) {
+      show("Not set: " + e.message, true);
+    } finally {
+      b.disabled = false;
+    }
+  }
   function renderNow(state) {
     for (const t of nowTargets) t.el.replaceChildren(...nowParts(state, t.skip));
   }
@@ -801,7 +849,7 @@
     } else if (!state.now.awake) {
       parts.push(para("app muted", "TV is off"));
     } else {
-      const { app, media, extras } = state.now;
+      const { app, media, extras, player } = state.now;
       if (app) parts.push(para("app", app.label));
       if (media && media.title) parts.push(para("title", media.title));
       if (media && media.subtitle) parts.push(para("subtitle", media.subtitle));
@@ -823,6 +871,12 @@
         }
         parts.push(row);
       }
+      if (player) {
+        parts.push(choices("speed", "Speed", player.speed,
+          player.speeds.map((s) => [String(s), s + "\u00d7", s])));
+        parts.push(choices("quality", "Quality", player.quality,
+          [["auto", "Auto", "auto"], ...player.qualities.map((q) => [String(q), q + "p", q])]));
+      }
       const known = extras.filter((x) => EXTRAS[x] && !skip.includes(x));
       if (known.length) {
         const row = document.createElement("div");
@@ -838,7 +892,7 @@
         }
         parts.push(row);
       }
-      if (!media && !known.length) parts.push(para("muted", app ? "Nothing to control here." : "No app open."));
+      if (!media && !player && !known.length) parts.push(para("muted", app ? "Nothing to control here." : "No app open."));
     }
     return parts;
   }
