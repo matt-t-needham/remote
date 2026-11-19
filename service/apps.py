@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 EXTRA_TYPES = ("key", "dialog", "search", "action", "channel")
-DIALOGS = ("keyboard", "channels")  # the keyboard bubble; the channel list
+DIALOGS = ("channels",)  # the channel list
 CHANNEL_DIRS = ("up", "down", "last")
 
 
@@ -63,7 +63,6 @@ def channel(direction: str, label: str) -> Extra:
 
 
 SEARCH = Extra("search", "Search")
-KEYBOARD = dialog("keyboard", "Keyboard")
 
 
 @dataclass(frozen=True)
@@ -131,16 +130,18 @@ class App:
     extras: tuple[Extra, ...] = ()
     launch: str | None = None  # component for `am start -n`; None: not on the Apps screen
     search: Callable[[str], str] | None = None  # query -> the `am start` command
+    # The launcher: it plays nothing itself, so what's playing is whatever
+    # holds the media button (e.g. Watch's audio behind Home).
+    launcher: bool = False
 
 
 # Launch components come from a read-only survey of the Shield (2026-11-19).
 APPS = {
     "computer.bix.materialious": App(  # Watch, our YouTube app
-        "Watch", (KEYBOARD,), "computer.bix.materialious/us.materialio.app.MainActivity"),
+        "Watch", (), "computer.bix.materialious/us.materialio.app.MainActivity"),
     "com.plexapp.android": App(
         "Plex",
-        (KEYBOARD,
-         key("search", "Search"),            # untested
+        (key("search", "Search"),            # untested
          key("captions", "Subtitles"),       # untested
          key("rewind", "Back"),              # untested
          key("fast-forward", "Forward")),    # untested
@@ -182,7 +183,7 @@ APPS = {
     "org.videolan.vlc": App(
         "VLC",
         (key("rewind", "Back 10 s"),
-         key("fast-forward", "Forward 10 s"),
+         key("fast-forward", "Fwd 10 s"),  # "Forward 10 s" wraps on a phone
          key("captions", "Tracks"),
          key("resize", "Resize"),
          key("audio-delay-down", "− 50 ms", "Audio delay"),
@@ -190,7 +191,7 @@ APPS = {
          key("subtitle-delay-down", "− 50 ms", "Subtitle delay"),
          key("subtitle-delay-up", "+ 50 ms", "Subtitle delay")),
         "org.videolan.vlc/.StartActivity"),
-    "com.spocky.projengmenu": App("Home"),  # Projectivy, the launcher
+    "com.spocky.projengmenu": App("Home", launcher=True),  # Projectivy
 }
 
 

@@ -30,10 +30,14 @@ are in `README.md`; this file is how to work on it.
   `dialog`, `search`, `action`, `channel`). The page renders extras by type and
   only ever names a key, action, package or direction; every shell string is
   built server-side. Entries marked `# untested` haven't been tried on the TV.
-  The main page polls `GET /api/now`
-  (`Shield.now()`: power, front app, `dumpsys media_session`) and shows the
-  front app, what's playing and the media keys its session advertises above
-  the base controls. A session's play state is stale, so it's never shown.
+  The page polls `GET /api/now`
+  (`Shield.now()`: power, front app, `dumpsys media_session`). The main page
+  shows the front app and what's playing above the base controls; the Remote
+  Control screen shows that too, plus the media keys its session advertises,
+  the extras and Watch's player settings. What's playing is the front app's
+  own session; only behind the launcher (`App(launcher=True)`) or with no
+  front app is it the media button session's. A session's play state is
+  stale, so it's never shown.
 - `service/steam.py`: Play a game. Lists installed games and launches one
   through the host's deploy-api with a launch-only token
   (`~/.config/bix/remote-launch-token`, mounted :ro); `scenes.play` launches

@@ -7,7 +7,7 @@
 <link rel="stylesheet" href="https://bix.computer/bix.css">
 <link rel="icon" type="image/svg+xml" href="https://bix.computer/favicon.svg">
 <style>
-  :root { --hold-ms: 750ms; }
+  :root { --hold-ms: 750ms; --btn-h: 3.4rem; }
   body {
     margin: 0;
     height: 100dvh;
@@ -16,8 +16,9 @@
     color: var(--bix-text, #cdd6f4);
     font-family: var(--bix-sans, "Helvetica Neue", Helvetica, Arial, sans-serif);
   }
-  /* Main page: title, then what's on the TV (scrolls if it must), then the
-     base controls pinned to the bottom third, always in the same place. */
+  /* Main page: title, then what's on the TV (app and title only; its
+     controls are on the Remote Control screen), then the base controls
+     pinned to the bottom third, always in the same place. */
   main {
     height: 100dvh;
     box-sizing: border-box;
@@ -31,18 +32,10 @@
   section { margin-bottom: 0.9rem; }
   .base { flex: none; padding-bottom: calc(0.25rem + env(safe-area-inset-bottom)); }
   .base section:last-child { margin-bottom: 0.75rem; }
-  main > #status { flex: none; margin: 0.4rem 0 0.5rem; }
+  main > #status { flex: none; margin: auto 0 0.5rem; }
 
-  /* On the TV: the front app, what it's playing, and its own controls. */
-  #context {
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
-    margin: 0;
-    padding-bottom: 0.5rem;
-    border-bottom: 1px solid var(--bix-border, #45475a);
-  }
+  /* On the TV: the front app and what it's playing. */
+  #context { flex: none; margin: 0; }
   .ctx .bix-label { display: block; margin: 0 0 0.35rem; }
   .ctx p { margin: 0; overflow-wrap: anywhere; }
   .ctx .title { font-size: 1.05rem; line-height: 1.3; }
@@ -51,29 +44,14 @@
   .ctx .muted { font-size: 0.95rem; }
   .ctx .app { font-size: 1.35rem; font-weight: 300; margin-bottom: 0.5rem; }
   .ctx .warn { color: var(--bix-warn, #f9e2af); font-size: 0.95rem; line-height: 1.3; }
-  .ctx .row { margin-top: 0.75rem; }
-  .ctx .row.media { grid-template-columns: repeat(var(--n, 2), 1fr); }
-  .ctx .row.media button { font-size: 0.95rem; padding: 0 0.25rem; }
-  .ctx .row.media .wide { order: 1; }
   .row { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.6rem; }
-  /* Watch's player: speed and quality, one compact button per choice; the
-     current one is filled (and aria-pressed). */
-  .ctx .choice-label { margin: 0.75rem 0 0.35rem; }
-  .ctx .row.choices { margin-top: 0; grid-template-columns: repeat(auto-fill, minmax(4.2rem, 1fr)); gap: 0.4rem; }
-  .ctx .row.choices button { min-height: 2.75rem; font-size: 0.95rem; padding: 0 0.25rem; }
-  .ctx-remote .choice-label { margin-top: 0.5rem; }
-  /* The app's extras: the same compact grid, under a caption per group. */
-  .ctx .row.extras { margin-top: 0.75rem; grid-template-columns: repeat(auto-fill, minmax(4.2rem, 1fr)); gap: 0.4rem; }
-  .ctx .choice-label + .row.extras { margin-top: 0; }
-  .ctx .row.extras button { min-height: 2.75rem; font-size: 0.95rem; padding: 0 0.25rem; line-height: 1.15; }
-  .ctx-remote .row.extras { margin-top: 0.5rem; }
   .row .wide { grid-column: 1 / -1; }
   .scenes .row { grid-template-columns: repeat(3, 1fr); }
   button {
     position: relative;
     overflow: hidden;
     font: 400 1.05rem var(--bix-sans, "Helvetica Neue", Helvetica, Arial, sans-serif);
-    min-height: 3.4rem;
+    min-height: var(--btn-h);
     border-radius: 10px;
     border: 1px solid var(--bix-border, #45475a);
     background: var(--bix-surface, #313244);
@@ -212,7 +190,40 @@
   .tiles.names { grid-auto-rows: 5.5rem; align-content: start; }
   .tiles.names .title { font-size: 1.2rem; }
 
-  /* Shield remote: d-pad with OK in the middle, Back and Home underneath. */
+  /* Shield remote: the front app's panel (what's playing and the app's own
+     controls) above the d-pad on phones, beside it on wide screens. The d-pad
+     keeps most of the screen; the panel scrolls if an app has a lot. */
+  .remote-body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    max-width: 34rem;
+    margin: 0 auto;
+    box-sizing: border-box;
+  }
+  .ctx-remote {
+    flex: none;
+    max-height: 40%;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+    scrollbar-color: var(--bix-surface-2, #45475a) transparent;
+    padding: 0 1rem 0.75rem;
+  }
+  .ctx-remote .app { font-size: 1.1rem; margin-bottom: 0.25rem; }
+  /* Every app button (media keys, extras, Watch's settings) is one size, the
+     screen's own, in one grid whose columns fit the longest label unwrapped
+     ("Play / Pause"): three across on a phone. Rows fill the width. */
+  .ctx-remote .row.controls {
+    margin-top: 0.6rem;
+    grid-template-columns: repeat(auto-fit, minmax(var(--ctl-col, 6.25rem), 1fr));
+    gap: 0.5rem;
+  }
+  .ctx-remote .row.controls button { font-size: 1rem; padding: 0 0.4rem; white-space: nowrap; }
+  .ctx-remote .choice-label { display: block; margin: 0.85rem 0 0; }
+  .ctx-remote .choice-label + .row.controls { margin-top: 0.4rem; }
   .dpad {
     flex: 1;
     min-height: 0;
@@ -221,27 +232,9 @@
     grid-template-rows: repeat(3, 1fr) 0.7fr;
     gap: 0.6rem;
     padding: 0 1rem 1rem;
-    width: 100%;
-    max-width: 34rem;
-    margin: 0 auto;
     box-sizing: border-box;
   }
   .dpad button { min-height: 0; font-size: 1.2rem; }
-  /* The same app controls as the main page, above the d-pad; the d-pad keeps
-     most of the screen and this scrolls if an app has a lot. */
-  .ctx-remote {
-    flex: none;
-    max-height: 40%;
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
-    width: 100%;
-    max-width: 34rem;
-    margin: 0 auto;
-    padding: 0 1rem 0.75rem;
-    box-sizing: border-box;
-  }
-  .ctx-remote .app { font-size: 1.1rem; margin-bottom: 0.25rem; }
-  .ctx-remote .row { margin-top: 0.5rem; }
   .dpad .k-up     { grid-area: 1 / 3 / 2 / 5; }
   .dpad .k-left   { grid-area: 2 / 1 / 3 / 3; }
   .dpad .k-select { grid-area: 2 / 3 / 3 / 5; }
@@ -306,21 +299,39 @@
   .bubble p { margin: 0.5rem 0 0; min-height: 1.2em; }
 
   /* Laptop and the Logitech Tap (landscape touch panel, ~1280×800): wider,
-     bigger targets, everything on one screen. */
-  @media (min-width: 48rem) {
+     bigger targets, everything on one screen. The main page's info and base
+     controls sit together in the middle of the space under the title. */
+  @media (min-width: 56.25rem) {
+    :root { --btn-h: clamp(3.75rem, 8dvh, 5rem); }
     main { max-width: 60rem; padding: calc(1.25rem + env(safe-area-inset-top)) 2rem 0; }
     h1 { margin: 0.75rem 0 1rem; }
-    .base { padding-bottom: calc(0.75rem + env(safe-area-inset-bottom)); }
+    #context { margin-top: auto; }
+    main > #status { margin: 0.75rem 0 0.75rem; }
+    .base { margin-bottom: auto; padding-bottom: calc(1.5rem + env(safe-area-inset-bottom)); }
     .ctx .app { font-size: 1.6rem; }
     .ctx .title { font-size: 1.2rem; }
-    .ctx .row.media button { font-size: 1.05rem; }
-    .scenes button { min-height: 4.5rem; font-size: 1.25rem; }
-    button { min-height: 3.75rem; }
+    .scenes button { min-height: calc(var(--btn-h) + 1rem); font-size: 1.25rem; }
     .tiles { padding: 0 2rem 1.5rem; }
     .screen .bar { padding: 1rem 2rem 0.75rem; }
     .tiles .title { font-size: 1.2rem; }
+    /* Remote Control: the app's panel on the left, scrolling inside itself;
+       the d-pad on the right at full height. */
+    .remote-body {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+      gap: 2.5rem;
+      max-width: 90rem;
+      padding: 0.5rem 2rem 1rem;
+    }
+    #remote .bar { width: 100%; max-width: 90rem; margin: 0 auto; box-sizing: border-box; }
+    .ctx-remote { max-height: none; min-height: 0; padding: 0; }
+    .ctx-remote .app { font-size: 1.6rem; margin-bottom: 0.5rem; }
+    .ctx-remote .row.controls { --ctl-col: 7.5rem; margin-top: 1rem; }
+    .ctx-remote .row.controls button { font-size: 1.05rem; }
+    .dpad { padding: 0; gap: 0.75rem; }
+    .dpad button { font-size: 1.35rem; }
   }
-  @media (min-width: 48rem) and (max-height: 50rem) {
+  @media (min-width: 56.25rem) and (max-height: 50rem) {
     h1 { font-size: 1.9rem; margin: 0.4rem 0 0.75rem; }
   }
 </style>
@@ -389,6 +400,7 @@
     <button type="button" class="close" aria-label="Close">&lt;</button>
     <button type="button" class="bar-link" id="open-keyboard" aria-haspopup="dialog" aria-controls="keyboard">Keyboard</button>
   </div>
+  <div class="remote-body">
   <section class="ctx ctx-remote" aria-label="On the TV" aria-live="polite">
     <div id="now-remote"><p class="muted">Checking…</p></div>
   </section>
@@ -400,6 +412,7 @@
     <button class="k-down" data-key="down" data-hold="0" data-repeat="150" data-repeat-delay="400">Down</button>
     <button class="k-back" data-key="back" data-hold="0">Back</button>
     <button class="k-home" data-key="home" data-hold="0">Home</button>
+  </div>
   </div>
   <p class="screen-status" role="status" aria-live="polite"></p>
 </div>
@@ -663,7 +676,7 @@
     kbdText.blur();
     kbdOpener.focus();
   }
-  // Opened from the Remote Control page or the main page's Keyboard; closing
+  // Opened from the Remote Control page's Keyboard or an app's Search; closing
   // returns focus to whichever opened it.
   function openKeyboard(from, searchApp) {
     kbdOpener = from;
@@ -730,7 +743,7 @@
         const art = "/api/art/" + encodeURIComponent(g.appid) + "/";
         const pic = document.createElement("picture");
         const wide = document.createElement("source");
-        wide.media = "(min-width: 48rem)";
+        wide.media = "(min-width: 56.25rem)";
         wide.srcset = art + "wide";
         const img = document.createElement("img");
         img.src = art + "cover";
@@ -833,19 +846,16 @@
   // and the app's extras). Polled on load, every 3 s while the page is
   // visible, and shortly after each send. The content is rebuilt only when the
   // reply changes, so a button isn't swapped out under a finger.
-  // Main page, and the Remote Control screen above its d-pad. That screen has
-  // its own Keyboard button in the bar, so it leaves that dialog out.
-  const nowTargets = [
-    { el: document.getElementById("now"), skip: [] },
-    { el: document.getElementById("now-remote"), skip: ["keyboard"] },
-  ];
+  // The main page shows the app and what's playing; the Remote Control
+  // screen shows that too, with the app's controls under it.
+  const nowMain = document.getElementById("now");
+  const nowRemote = document.getElementById("now-remote");
   const MEDIA_LABELS = {
     "previous": "Previous", "rewind": "Rewind", "play-pause": "Play / Pause",
     "fast-forward": "Forward", "next": "Next",
   };
   // The dialogs a "dialog" extra opens, by name.
   const DIALOGS = {
-    keyboard: { open: (b) => openKeyboard(b), id: "keyboard" },
     channels: { open: (b) => openChannels(b), id: "channels" },
   };
   // One button per extra type (apps.py's EXTRA_TYPES). Sends go through
@@ -865,12 +875,12 @@
       b.addEventListener("click", () => openKeyboard(b, app ? app.label : "the app"));
     },
   };
-  // The extras to show: ones the page can render, minus a dialog this place
-  // has elsewhere, minus any that repeat a media control already shown.
-  function shownExtras(extras, media, skip) {
+  // The extras to show: ones the page can render, minus any that repeat a
+  // media control already shown.
+  function shownExtras(extras, media) {
     const controls = media ? media.controls : [];
     return extras.filter((x) => RENDER[x.type]
-      && !(x.type === "dialog" && (!DIALOGS[x.name] || skip.includes(x.name)))
+      && !(x.type === "dialog" && !DIALOGS[x.name])
       && !controls.includes(x.type === "key" ? x.key : x.same_as));
   }
   // Consecutive extras with the same group share a caption and a grid.
@@ -882,7 +892,7 @@
       if (!row || (x.group || null) !== group) {
         group = x.group || null;
         row = document.createElement("div");
-        row.className = "row extras";
+        row.className = "row controls";
         if (group) {
           const wrap = document.createElement("div");
           wrap.setAttribute("role", "group");
@@ -921,7 +931,7 @@
     label.className = "bix-label choice-label";
     label.textContent = caption;
     const row = document.createElement("div");
-    row.className = "row choices";
+    row.className = "row controls";
     for (const [value, text, reported] of options) {
       const b = document.createElement("button");
       b.type = "button";
@@ -954,48 +964,49 @@
     }
   }
   function renderNow(state) {
-    for (const t of nowTargets) t.el.replaceChildren(...nowParts(state, t.skip));
+    nowMain.replaceChildren(...infoParts(state));
+    nowRemote.replaceChildren(...infoParts(state), ...controlParts(state));
   }
-  // Fresh elements per call: each place gets its own bound buttons.
-  function nowParts(state, skip) {
+  // The front app and what's playing (fresh elements per call: each place
+  // gets its own).
+  function infoParts(state) {
+    if (state.error !== undefined) return [para("warn", "Can't read the TV: " + state.error)];
+    if (!state.now.awake) return [para("app muted", "TV is off")];
+    const { app, media } = state.now;
     const parts = [];
-    if (state.error !== undefined) {
-      parts.push(para("warn", "Can't read the TV: " + state.error));
-    } else if (!state.now.awake) {
-      parts.push(para("app muted", "TV is off"));
-    } else {
-      const { app, media, extras, player } = state.now;
-      if (app) parts.push(para("app", app.label));
-      if (media && media.title) parts.push(para("title", media.title));
-      if (media && media.subtitle) parts.push(para("subtitle", media.subtitle));
-      if (media && media.controls.length) {
-        const row = document.createElement("div");
-        row.className = "row media";
-        // Four or five don't fit one row on a phone: Play / Pause then takes
-        // its own full-width row under the others.
-        const split = media.controls.length > 3 && media.controls.includes("play-pause");
-        row.style.setProperty("--n", String(media.controls.length - (split ? 1 : 0)));
-        for (const c of media.controls) {
-          const b = document.createElement("button");
-          if (split && c === "play-pause") b.className = "wide";
-          b.dataset.key = c;
-          b.dataset.hold = "0";
-          b.textContent = MEDIA_LABELS[c] || c;
-          bindHold(b);
-          row.append(b);
-        }
-        parts.push(row);
+    if (app) parts.push(para("app", app.label));
+    if (media && media.title) parts.push(para("title", media.title));
+    if (media && media.subtitle) parts.push(para("subtitle", media.subtitle));
+    if (!app && !media) parts.push(para("muted", "No app open."));
+    return parts;
+  }
+  // The app's controls: its media session's keys, Watch's player settings,
+  // then its extras.
+  function controlParts(state) {
+    if (state.error !== undefined || !state.now.awake) return [];
+    const { app, media, extras, player } = state.now;
+    const parts = [];
+    if (media && media.controls.length) {
+      const row = document.createElement("div");
+      row.className = "row controls";
+      for (const c of media.controls) {
+        const b = document.createElement("button");
+        b.dataset.key = c;
+        b.dataset.hold = "0";
+        b.textContent = MEDIA_LABELS[c] || c;
+        bindHold(b);
+        row.append(b);
       }
-      if (player) {
-        parts.push(choices("speed", "Speed", player.speed,
-          player.speeds.map((s) => [String(s), s + "\u00d7", s])));
-        parts.push(choices("quality", "Quality", player.quality,
-          [["auto", "Auto", "auto"], ...player.qualities.map((q) => [String(q), q + "p", q])]));
-      }
-      const known = shownExtras(extras, media, skip);
-      parts.push(...extrasParts(known, app));
-      if (!media && !player && !known.length) parts.push(para("muted", app ? "Nothing to control here." : "No app open."));
+      parts.push(row);
     }
+    if (player) {
+      parts.push(choices("speed", "Speed", player.speed,
+        player.speeds.map((s) => [String(s), s + "\u00d7", s])));
+      parts.push(choices("quality", "Quality", player.quality,
+        [["auto", "Auto", "auto"], ...player.qualities.map((q) => [String(q), q + "p", q])]));
+    }
+    parts.push(...extrasParts(shownExtras(extras, media), app));
+    if (app && !parts.length) parts.push(para("muted", "Nothing to control here."));
     return parts;
   }
   let nowBusy = false;
