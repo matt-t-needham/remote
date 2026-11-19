@@ -112,6 +112,16 @@ def watch(number: int, url: str, modem: Modem, shield: Shield) -> list[Step]:
     return _run(f"watch {number}", plan)
 
 
+def switch_channel(number: int, url: str, shield: Shield) -> list[Step]:
+    """Channel up/down/last from the channel player: the TV is already on and
+    on the Shield, so only the player is restarted on the new stream."""
+    plan = [
+        ("player stop", shield.stop_player),
+        (f"play channel {number}", lambda: shield.play_stream(url)),
+    ]
+    return _run(f"channel {number}", plan)
+
+
 def play(appid: str, modem: Modem, shield: Shield, steam: Steam) -> list[Step]:
     """Launch the game first (it takes longest, and the HTPC is always on), then
     the GAME scene brings the amp, Shield and TV up while it loads."""

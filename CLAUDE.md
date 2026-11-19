@@ -25,8 +25,12 @@ are in `README.md`; this file is how to work on it.
   `docker compose exec -T remote python -c "import config, shield;
   print(shield.Shield(config.SHIELD_ADDR, config.ADB_KEY).pair(90))"` and
   accept the prompt on the TV.
-- `service/apps.py`: the hand-kept list of Shield apps (package → label and
-  page extras: `keyboard`, `channels`). The main page polls `GET /api/now`
+- `service/apps.py`: the one table of Shield apps (package → label, launch
+  component, search intent, and page extras as typed objects: `key`,
+  `dialog`, `search`, `action`, `channel`). The page renders extras by type and
+  only ever names a key, action, package or direction; every shell string is
+  built server-side. Entries marked `# untested` haven't been tried on the TV.
+  The main page polls `GET /api/now`
   (`Shield.now()`: power, front app, `dumpsys media_session`) and shows the
   front app, what's playing and the media keys its session advertises above
   the base controls. A session's play state is stale, so it's never shown.

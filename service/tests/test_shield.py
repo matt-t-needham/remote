@@ -454,3 +454,56 @@ def test_watch_player_set_unheard_is_shield_error(key, monkeypatch):
     use(monkeypatch, AmDevice("Broadcast completed: result=0"))
     with pytest.raises(ShieldError, match="Watch isn't running"):
         Shield("192.168.0.36", key).watch_player_set("speed", "1")
+
+
+class ReplyDevice(FakeDevice):
+    """Answers every shell command with `reply`."""
+
+    def __init__(self, reply):
+        super().__init__(["Awake"])
+        self.reply = reply
+
+    def shell(self, cmd):
+        self.commands.append(cmd)
+        return self.reply
+
+
+@pytest.mark.parametrize("reply", [
+    "Starting: Intent { cmp=org.videolan.vlc/.StartActivity }",
+    # Already running: brought to the front, which is what launching means.
+    "Starting: Intent { cmp=x/.Main }\nWarning: Activity not started, its current task has been brought to the front",
+])
+def test_start_succeeds(key, monkeypatch, reply):
+    use(monkeypatch, ReplyDevice(reply))
+    Shield("192.168.0.36", key).start("am start -n org.videolan.vlc/.StartActivity")
+
+
+@pytest.mark.parametrize("reply", [
+    "Starting: Intent { cmp=x/.Nope }\nError type 3\nError: Activity class {x/.Nope} does not exist.",
+    "Starting: Intent { act=android.intent.action.VIEW }\nError: Activity not started, unable to resolve Intent",
+    "Exception occurred while executing 'start':\njava.lang.SecurityException: Permission Denial",
+])
+def test_start_error_output_is_shield_error(key, monkeypatch, reply):
+    use(monkeypatch, ReplyDevice(reply))
+    with pytest.raises(ShieldError, match="am start refused"):
+        Shield("192.168.0.36", key).start("am start -n x/.Nope")
+
+
+def test_start_refuses_anything_but_am_start(key, monkeypatch):
+    dev = use(monkeypatch, ReplyDevice(""))
+    with pytest.raises(ShieldError):
+        Shield("192.168.0.36", key).start("reboot")
+    assert dev.commands == []
+
+
+def test_has_session_reads_media_session_packages(key, monkeypatch):
+    use(monkeypatch, ReplyDevice(MEDIA_SESSIONS))
+    s = Shield("192.168.0.36", key)
+    assert s.has_session("com.spotify.tv.android")
+    assert not s.has_session("org.schabi.newpipe")
+
+
+def test_broadcast_quotes_and_returns_result(key, monkeypatch):
+    dev = use(monkeypatch, ReplyDevice(AM_HEAD + "Broadcast completed: result=0"))
+    assert Shield("192.168.0.36", key).broadcast("a.b..c.REPEAT", "org.schabi.newpipe") == 0
+    assert dev.commands == ["am broadcast -a a.b..c.REPEAT -p org.schabi.newpipe"]
