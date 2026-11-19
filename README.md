@@ -13,7 +13,12 @@ phone ──HTTPS (Access)──> remote container ──USB serial──> ATOM 
   commands only (`POST /api/on|off|game|shield|mute|volume-up|volume-down`,
   volume `?steps=1..5`), scenes (`POST /api/scene/tv|game`), the TV alone
   through the Shield (`POST /api/tv/on|off`), typing on the TV
-  (`POST /api/text {"text": …}`: ASCII, ≤200 chars, then Enter), a phone page at
+  (`POST /api/text {"text": …}`: ASCII, ≤200 chars, then Enter), the front
+  app's own search (`POST /api/search {"text": …}`, by intent; 404 if it has
+  none), launching an app (`GET /api/apps`, `POST /api/launch/<package>`),
+  channel up/down/last in the channel player (`POST /api/channel/up|down|last`),
+  app player actions (`POST /api/app-action/<name>`), all allowlisted in
+  `apps.py`; a phone page at
   `/`, `/healthz` pings the ESP. Held volume keeps two requests queued, so
   frames go back to back at the NEC period (108 ms, padded by IRremoteESP8266),
   the same rate as the amp's own remote; that is the ceiling.

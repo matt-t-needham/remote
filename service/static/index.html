@@ -62,6 +62,11 @@
   .ctx .row.choices { margin-top: 0; grid-template-columns: repeat(auto-fill, minmax(4.2rem, 1fr)); gap: 0.4rem; }
   .ctx .row.choices button { min-height: 2.75rem; font-size: 0.95rem; padding: 0 0.25rem; }
   .ctx-remote .choice-label { margin-top: 0.5rem; }
+  /* The app's extras: the same compact grid, under a caption per group. */
+  .ctx .row.extras { margin-top: 0.75rem; grid-template-columns: repeat(auto-fill, minmax(4.2rem, 1fr)); gap: 0.4rem; }
+  .ctx .choice-label + .row.extras { margin-top: 0; }
+  .ctx .row.extras button { min-height: 2.75rem; font-size: 0.95rem; padding: 0 0.25rem; line-height: 1.15; }
+  .ctx-remote .row.extras { margin-top: 0.5rem; }
   .row .wide { grid-column: 1 / -1; }
   .scenes .row { grid-template-columns: repeat(3, 1fr); }
   button {
@@ -118,7 +123,7 @@
   button:focus-visible { outline: 2px solid var(--bix-accent, #fab387); outline-offset: 2px; }
   button:disabled { opacity: 0.55; cursor: progress; }
 
-  .row.volume { grid-template-columns: repeat(3, 1fr); }
+  .row.volume, .row.three { grid-template-columns: repeat(3, 1fr); }
 
   #status, .screen-status, #kbd-status {
     min-height: 1.4em;
@@ -203,6 +208,9 @@
   .tiles .title-only { flex: 1; display: flex; align-items: center; justify-content: center; }
   /* Channel thumbnails are logos: show them whole, not cropped. */
   .tiles.logos img { object-fit: contain; padding: 0.75rem; box-sizing: border-box; }
+  /* Apps: names only (no logos), so the tiles are short and many fit. */
+  .tiles.names { grid-auto-rows: 5.5rem; align-content: start; }
+  .tiles.names .title { font-size: 1.2rem; }
 
   /* Shield remote: d-pad with OK in the middle, Back and Home underneath. */
   .dpad {
@@ -349,9 +357,10 @@
   </section>
 
   <section>
-    <div class="row">
+    <div class="row three">
       <button type="button" id="open-remote" aria-haspopup="dialog" aria-controls="remote">Remote Control</button>
       <button type="button" id="open-devices" aria-haspopup="dialog" aria-controls="devices">Devices</button>
+      <button type="button" id="open-apps" aria-haspopup="dialog" aria-controls="apps">Apps</button>
     </div>
   </section>
   </div>
@@ -368,6 +377,11 @@
 <div id="channels" class="screen" role="dialog" aria-modal="true" aria-label="Channels" hidden>
   <div class="bar"><button type="button" class="close" aria-label="Close">&lt;</button></div>
   <div id="channels-list" class="tiles logos"></div>
+</div>
+
+<div id="apps" class="screen" role="dialog" aria-modal="true" aria-label="Apps" hidden>
+  <div class="bar"><button type="button" class="close" aria-label="Close">&lt;</button></div>
+  <div id="apps-list" class="tiles names"></div>
 </div>
 
 <div id="remote" class="screen" role="dialog" aria-modal="true" aria-label="Remote control" hidden>
@@ -449,6 +463,9 @@
     if (b.dataset.watch) return "/api/watch/" + encodeURIComponent(b.dataset.watch);
     if (b.hasAttribute("data-quit")) return "/api/quit-game";
     if (b.dataset.key) return "/api/key/" + b.dataset.key;
+    if (b.dataset.launch) return "/api/launch/" + encodeURIComponent(b.dataset.launch);
+    if (b.dataset.channel) return "/api/channel/" + b.dataset.channel;
+    if (b.dataset.action) return "/api/app-action/" + encodeURIComponent(b.dataset.action);
     if (b.dataset.tv) return "/api/tv/" + b.dataset.tv;
     if (b.dataset.scene) return "/api/scene/" + b.dataset.scene;
     return "/api/" + b.dataset.cmd;
@@ -634,6 +651,9 @@
   const kbdStatus = document.getElementById("kbd-status");
   const kbdOpen = document.getElementById("open-keyboard");
   let kbdOpener = kbdOpen;
+  // Search mode: the text goes to the front app's own search (/api/search)
+  // instead of being typed into its focused field.
+  let kbdSearch = null;
   function kbdShow(text, isError) {
     kbdStatus.textContent = text;
     kbdStatus.classList.toggle("error", !!isError);
@@ -645,8 +665,12 @@
   }
   // Opened from the Remote Control page or the main page's Keyboard; closing
   // returns focus to whichever opened it.
-  function openKeyboard(from) {
+  function openKeyboard(from, searchApp) {
     kbdOpener = from;
+    kbdSearch = searchApp || null;
+    kbdText.placeholder = kbdSearch ? "Search " + kbdSearch : "Type, then Send";
+    kbdText.setAttribute("aria-label", kbdSearch ? "Search " + kbdSearch : "Text to type on the TV");
+    kbdSend.textContent = kbdSearch ? "Search" : "Send";
     kbdShow("", false);
     kbd.hidden = false;
     kbdText.focus();
@@ -660,9 +684,10 @@
     const text = kbdText.value;
     if (!text.trim() || kbdSend.disabled) return;
     kbdSend.disabled = true;
-    kbdShow("Typing on the TV…", false);
+    const searching = kbdSearch;
+    kbdShow(searching ? "Searching…" : "Typing on the TV…", false);
     try {
-      const r = await fetch("/api/text", {
+      const r = await fetch(searching ? "/api/search" : "/api/text", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text }),
@@ -677,7 +702,8 @@
       }
       kbdText.value = "";
       closeKeyboard();
-      show("Typed " + body.typed + " characters and Enter (" + new Date().toLocaleTimeString() + ")", false);
+      show((searching ? "Searched " + body.searched : "Typed " + body.typed + " characters and Enter")
+        + " (" + new Date().toLocaleTimeString() + ")", false);
       refreshNowSoon();
     } catch (err) {
       kbdShow("Not sent: " + err.message, true);
@@ -731,6 +757,37 @@
     }
   });
 
+  // Apps: one text tile per app; holding one launches it, then the list closes.
+  const appsBtn = document.getElementById("open-apps");
+  const appsScreen = document.getElementById("apps");
+  const appsList = document.getElementById("apps-list");
+  appsBtn.addEventListener("click", async () => {
+    appsBtn.disabled = true;
+    try {
+      const r = await fetch("/api/apps");
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) { show("Couldn't load apps: " + (body.detail || r.status), true); return; }
+      appsList.replaceChildren();
+      for (const a of body) {
+        const b = document.createElement("button");
+        b.dataset.launch = a.package;
+        b.dataset.label = "Open " + a.label;
+        const title = document.createElement("span");
+        title.className = "title title-only";
+        title.textContent = a.label;
+        b.append(title);
+        bindHold(b, closeScreens);  // the result shows on the main screen
+        appsList.append(b);
+      }
+      appsList.scrollTop = 0;
+      openScreen(appsScreen, appsBtn);
+    } catch (e) {
+      show("Couldn't load apps: " + e.message, true);
+    } finally {
+      appsBtn.disabled = false;
+    }
+  });
+
   // Channels: dizquetv's channels, its thumbnails and names; holding one runs
   // the TV steps and plays it in VLC on the Shield.
   const chBtn = document.getElementById("open-channels");
@@ -777,7 +834,7 @@
   // visible, and shortly after each send. The content is rebuilt only when the
   // reply changes, so a button isn't swapped out under a finger.
   // Main page, and the Remote Control screen above its d-pad. That screen has
-  // its own Keyboard button in the bar, so it leaves that extra out.
+  // its own Keyboard button in the bar, so it leaves that dialog out.
   const nowTargets = [
     { el: document.getElementById("now"), skip: [] },
     { el: document.getElementById("now-remote"), skip: ["keyboard"] },
@@ -786,10 +843,68 @@
     "previous": "Previous", "rewind": "Rewind", "play-pause": "Play / Pause",
     "fast-forward": "Forward", "next": "Next",
   };
-  const EXTRAS = {
-    keyboard: { label: "Keyboard", open: (b) => openKeyboard(b), dialog: "keyboard" },
-    channels: { label: "Channels", open: (b) => openChannels(b), dialog: "channels" },
+  // The dialogs a "dialog" extra opens, by name.
+  const DIALOGS = {
+    keyboard: { open: (b) => openKeyboard(b), id: "keyboard" },
+    channels: { open: (b) => openChannels(b), id: "channels" },
   };
+  // One button per extra type (apps.py's EXTRA_TYPES). Sends go through
+  // pathFor and bindHold like every other button; dialogs and Search open.
+  const RENDER = {
+    key: (x, b) => { b.dataset.key = x.key; b.dataset.hold = "0"; bindHold(b); },
+    action: (x, b) => { b.dataset.action = x.name; b.dataset.hold = x.name.endsWith("-close") ? "350" : "0"; bindHold(b); },
+    channel: (x, b) => { b.dataset.channel = x.dir; b.dataset.hold = "0"; bindHold(b); },
+    dialog: (x, b, app) => {
+      b.setAttribute("aria-haspopup", "dialog");
+      b.setAttribute("aria-controls", DIALOGS[x.name].id);
+      b.addEventListener("click", () => DIALOGS[x.name].open(b));
+    },
+    search: (x, b, app) => {
+      b.setAttribute("aria-haspopup", "dialog");
+      b.setAttribute("aria-controls", "keyboard");
+      b.addEventListener("click", () => openKeyboard(b, app ? app.label : "the app"));
+    },
+  };
+  // The extras to show: ones the page can render, minus a dialog this place
+  // has elsewhere, minus any that repeat a media control already shown.
+  function shownExtras(extras, media, skip) {
+    const controls = media ? media.controls : [];
+    return extras.filter((x) => RENDER[x.type]
+      && !(x.type === "dialog" && (!DIALOGS[x.name] || skip.includes(x.name)))
+      && !controls.includes(x.type === "key" ? x.key : x.same_as));
+  }
+  // Consecutive extras with the same group share a caption and a grid.
+  function extrasParts(extras, app) {
+    const parts = [];
+    let row = null;
+    let group;
+    for (const x of extras) {
+      if (!row || (x.group || null) !== group) {
+        group = x.group || null;
+        row = document.createElement("div");
+        row.className = "row extras";
+        if (group) {
+          const wrap = document.createElement("div");
+          wrap.setAttribute("role", "group");
+          wrap.setAttribute("aria-label", group);
+          const label = document.createElement("span");
+          label.className = "bix-label choice-label";
+          label.textContent = group;
+          wrap.append(label, row);
+          parts.push(wrap);
+        } else {
+          parts.push(row);
+        }
+      }
+      const b = document.createElement("button");
+      b.type = "button";
+      b.textContent = x.label;
+      if (group) b.dataset.label = group + " " + x.label;
+      RENDER[x.type](x, b, app);
+      row.append(b);
+    }
+    return parts;
+  }
   function para(cls, text) {
     const p = document.createElement("p");
     p.className = cls;
@@ -877,21 +992,8 @@
         parts.push(choices("quality", "Quality", player.quality,
           [["auto", "Auto", "auto"], ...player.qualities.map((q) => [String(q), q + "p", q])]));
       }
-      const known = extras.filter((x) => EXTRAS[x] && !skip.includes(x));
-      if (known.length) {
-        const row = document.createElement("div");
-        row.className = "row";
-        for (const x of known) {
-          const b = document.createElement("button");
-          b.type = "button";
-          b.textContent = EXTRAS[x].label;
-          b.setAttribute("aria-haspopup", "dialog");
-          b.setAttribute("aria-controls", EXTRAS[x].dialog);
-          b.addEventListener("click", () => EXTRAS[x].open(b));
-          row.append(b);
-        }
-        parts.push(row);
-      }
+      const known = shownExtras(extras, media, skip);
+      parts.push(...extrasParts(known, app));
       if (!media && !player && !known.length) parts.push(para("muted", app ? "Nothing to control here." : "No app open."));
     }
     return parts;

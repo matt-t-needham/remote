@@ -51,6 +51,14 @@ KEYS = {
     "next": "KEYCODE_MEDIA_NEXT",
     "rewind": "KEYCODE_MEDIA_REWIND",
     "fast-forward": "KEYCODE_MEDIA_FAST_FORWARD",
+    # App extras (apps.py).
+    "captions": "KEYCODE_CAPTIONS",
+    "search": "KEYCODE_SEARCH",
+    "resize": "KEYCODE_Z",                   # VLC: cycle the video's scale
+    "audio-delay-down": "KEYCODE_J",         # VLC: audio delay -50 ms
+    "audio-delay-up": "KEYCODE_K",           # VLC: +50 ms
+    "subtitle-delay-down": "KEYCODE_G",      # VLC: subtitle delay -50 ms
+    "subtitle-delay-up": "KEYCODE_H",        # VLC: +50 ms
 }
 
 # PlaybackState action bits (android.media.session.PlaybackState) behind each
@@ -281,8 +289,32 @@ class Shield:
         state = self._shell("dumpsys power | grep -m1 mWakefulness=").removeprefix("mWakefulness=")
         if state != "Awake":
             return Now(awake=False)
-        app = front_app(self._shell("dumpsys window | grep -m1 mCurrentFocus"))
+        app = self.front()
         return Now(awake=True, app=app, media=choose_media(self._shell("dumpsys media_session"), app))
+
+    def front(self) -> str | None:
+        """The front app's package (see front_app)."""
+        return front_app(self._shell("dumpsys window | grep -m1 mCurrentFocus"))
+
+    def start(self, command: str) -> None:
+        """Run an `am start` command (built from allowlisted parts, arguments
+        shell-quoted). am exits 0 even when nothing started; it says so on an
+        `Error:` line (or an exception), which raises ShieldError."""
+        if not command.startswith("am start "):
+            raise ShieldError(f"not an am start: {command[:40]!r}")
+        out = self._shell(command)
+        if re.search(r"^Error", out, re.M) or "Exception" in out:
+            raise ShieldError(f"am start refused: {out[-200:]}")
+
+    def has_session(self, package: str) -> bool:
+        """Whether `package` has a media session (its player is open)."""
+        sessions, _ = parse_sessions(self._shell("dumpsys media_session"))
+        return any(s.package == package for s in sessions)
+
+    def broadcast(self, action: str, package: str) -> int:
+        """Send a broadcast to one package; its result code."""
+        code, _ = parse_broadcast(self._shell(f"am broadcast -a {shlex.quote(action)} -p {shlex.quote(package)}"))
+        return code
 
     def watch_player(self) -> dict | None:
         """Watch's player state (see watch_state); None when nothing answered:

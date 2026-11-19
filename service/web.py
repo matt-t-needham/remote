@@ -1,5 +1,7 @@
 """remote — the living-room remote: the Onkyo TX-SR3100 over IR, through the ATOM Lite serial IR modem."""
 import logging
+import shlex
+import threading
 import time
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -40,8 +42,25 @@ class TypedText(BaseModel):
     text: str
 
 
+def next_channel(numbers: list[int], current: int | None, direction: str) -> int:
+    """Channel up/down through `numbers` (channel order), wrapping around.
+    From an unknown current channel, up is the first and down the last."""
+    if current not in numbers:
+        return numbers[0] if direction == "up" else numbers[-1]
+    i = numbers.index(current) + (1 if direction == "up" else -1)
+    return numbers[i % len(numbers)]
+
+
 def create_app(modem: Modem, shield: Shield, steam: Steam, dizque: Dizque) -> FastAPI:
     app = FastAPI(title="remote", docs_url=None, redoc_url=None, openapi_url=None)
+    # The channel playing and the one before it, for channel up/down/last.
+    # Set by /api/watch and /api/channel when the stream started; lost on restart.
+    tuned: dict[str, int | None] = {"current": None, "previous": None}
+    tuning = threading.Lock()
+
+    def _tuned_to(number: int, steps: list[scenes.Step]) -> None:
+        if steps and steps[-1].ok and tuned["current"] != number:
+            tuned["previous"], tuned["current"] = tuned["current"], number
 
     @app.get("/healthz")
     def healthz():
@@ -100,7 +119,7 @@ def create_app(modem: Modem, shield: Shield, steam: Steam, dizque: Dizque) -> Fa
             "awake": state.awake,
             "app": {"package": state.app, "label": entry.label} if entry else None,
             "media": {"title": media.title, "subtitle": media.subtitle, "controls": media.controls} if media else None,
-            "extras": list(entry.extras) if entry else [],
+            "extras": [x.as_json() for x in entry.extras] if entry else [],
             "player": _watch_player() if state.app == WATCH else None,
         }
 
@@ -179,8 +198,92 @@ def create_app(modem: Modem, shield: Shield, steam: Steam, dizque: Dizque) -> Fa
             raise HTTPException(status_code=502, detail=str(e)) from None
         if number not in known:
             raise HTTPException(status_code=404, detail="no such channel")
-        steps = scenes.watch(number, dizque.stream_url(number), modem, shield)
+        with tuning:
+            steps = scenes.watch(number, dizque.stream_url(number), modem, shield)
+            _tuned_to(number, steps)
         return _scene_reply(f"watch {number}", steps, {"watch": number})
+
+    @app.post("/api/channel/{direction}", dependencies=[Depends(auth.require_control)])
+    def channel_step(direction: str):
+        """Channel up/down (channel order, wrapping) or back to the last one,
+        in the channel player: no amp or wake steps."""
+        if direction not in apps.CHANNEL_DIRS:
+            raise HTTPException(status_code=404, detail="no such channel direction")
+        with tuning:
+            if direction == "last":
+                number = tuned["previous"]
+                if number is None:
+                    raise HTTPException(status_code=409, detail="no previous channel yet")
+            else:
+                try:
+                    numbers = [c["number"] for c in dizque.channels()]
+                except DizqueError as e:
+                    log.error("channel list FAILED: %s", e)
+                    raise HTTPException(status_code=502, detail=str(e)) from None
+                if not numbers:
+                    raise HTTPException(status_code=409, detail="dizquetv has no channels")
+                number = next_channel(numbers, tuned["current"], direction)
+            steps = scenes.switch_channel(number, dizque.stream_url(number), shield)
+            _tuned_to(number, steps)
+        return _scene_reply(f"channel {direction} to {number}", steps, {"channel": number})
+
+    @app.get("/api/apps", dependencies=[Depends(auth.require_access)])
+    def app_list():
+        return apps.launchable()
+
+    @app.post("/api/launch/{package}", dependencies=[Depends(auth.require_control)])
+    def launch(package: str):
+        entry = apps.APPS.get(package)
+        if entry is None or entry.launch is None:
+            raise HTTPException(status_code=404, detail="no such app")
+        try:
+            shield.start(f"am start -n {shlex.quote(entry.launch)}")
+        except ShieldError as e:
+            log.error("launch %s FAILED: %s", package, e)
+            raise HTTPException(status_code=502, detail=str(e)) from None
+        log.info("launched %s", package)
+        return {"launched": package}
+
+    @app.post("/api/search", dependencies=[Depends(auth.require_control)])
+    def search(body: TypedText):
+        # The query itself isn't logged: it's whatever Matt searched for.
+        try:
+            query = apps.search_text(body.text)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from None
+        try:
+            package = shield.front()
+        except ShieldError as e:
+            log.error("search: reading the front app FAILED: %s", e)
+            raise HTTPException(status_code=502, detail=str(e)) from None
+        entry = apps.lookup(package) if package else None
+        if entry is None or entry.search is None:
+            raise HTTPException(status_code=404, detail="the app on the TV has no search")
+        try:
+            shield.start(entry.search(query))
+        except ShieldError as e:
+            log.error("search in %s FAILED: %s", package, e)
+            raise HTTPException(status_code=502, detail=str(e)) from None
+        log.info("searched %s for %d characters", package, len(query))
+        return {"searched": entry.label}
+
+    @app.post("/api/app-action/{name}", dependencies=[Depends(auth.require_control)])
+    def app_action(name: str):
+        act = apps.ACTIONS.get(name)
+        if act is None:
+            raise HTTPException(status_code=404, detail="no such action")
+        label = apps.lookup(act.package).label
+        try:
+            # The receiver lives in the app's player, which has a media
+            # session while it's open; am's result can't tell (apps.py).
+            if not shield.has_session(act.package):
+                raise HTTPException(status_code=409, detail=f"{label}'s player isn't open")
+            shield.broadcast(act.action, act.package)
+        except ShieldError as e:
+            log.error("app action %s FAILED: %s", name, e)
+            raise HTTPException(status_code=502, detail=str(e)) from None
+        log.info("app action %s sent", name)
+        return {"action": name}
 
     @app.get("/api/games", dependencies=[Depends(auth.require_access)])
     def games():

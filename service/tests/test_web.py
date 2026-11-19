@@ -1,3 +1,5 @@
+import shlex
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -69,6 +71,23 @@ class FakeShield:
         self._do(f"watch {kind} {value}")
         if getattr(self, "refuse", None):
             raise shield_mod.Refused(self.refuse)
+
+    def front(self):
+        self._do("front")
+        return getattr(self, "front_pkg", None)
+
+    def start(self, command: str) -> None:
+        self._do("start " + command)
+        if getattr(self, "start_error", None):
+            raise ShieldError(self.start_error)
+
+    def has_session(self, package: str) -> bool:
+        self._do("has_session " + package)
+        return getattr(self, "session", False)
+
+    def broadcast(self, action: str, package: str) -> int:
+        self._do(f"broadcast {action} {package}")
+        return 0
 
     def is_awake(self) -> bool:
         self._do("is_awake")
@@ -243,7 +262,7 @@ def test_page_served(client):
     assert 'id="now"' in r.text and 'id="now-remote"' in r.text
     for state in ("on", "off"):
         assert f'data-tv="{state}"' in r.text
-    assert 'id="open-keyboard"' in r.text and 'fetch("/api/text"' in r.text
+    assert 'id="open-keyboard"' in r.text
     assert f'maxlength="{shield_mod.MAX_TEXT}"' in r.text
     assert "id=\"quit-game\"" in r.text
     # On the TV: polled, with a label for every media control and a renderer
@@ -251,8 +270,14 @@ def test_page_served(client):
     assert 'id="context"' in r.text and 'fetch("/api/now")' in r.text
     for name, _ in shield_mod.MEDIA_CONTROLS:
         assert f'"{name}": "' in r.text
-    for extra in apps.EXTRAS:
-        assert f"{extra}: {{ label:" in r.text
+    for kind in apps.EXTRA_TYPES:
+        assert f"    {kind}: (x, b" in r.text
+    for name in apps.DIALOGS:
+        assert f"    {name}: {{ open:" in r.text
+    # Apps launcher in the base block's last row, three across.
+    assert 'class="row three"' in r.text and 'id="open-apps"' in r.text
+    assert 'fetch("/api/apps")' in r.text and '"/api/launch/"' in r.text
+    assert 'fetch(searching ? "/api/search" : "/api/text"' in r.text
     # Watch's player settings, one row per setting the server takes.
     assert 'fetch("/api/watch-player/" + kind' in r.text
     for kind in shield_mod.WATCH_SETTINGS:
@@ -549,7 +574,7 @@ def test_now_playing(client, shield):
         "awake": True,
         "app": {"package": "com.spotify.tv.android", "label": "Spotify"},
         "media": {"title": "Chapter 48", "subtitle": None, "controls": ["rewind", "play-pause"]},
-        "extras": ["keyboard"],
+        "extras": [{"type": "search", "label": "Search"}],
         "player": None,
     }
     assert "watch_player" not in shield.calls  # only Watch is asked
@@ -580,8 +605,192 @@ def test_now_needs_access(modem, shield, monkeypatch):
 
 
 def test_app_extras_are_ones_the_page_renders():
+    media = {name for name, _ in shield_mod.MEDIA_CONTROLS}
     for package, app in apps.APPS.items():
-        assert set(app.extras) <= apps.EXTRAS, package
+        for x in app.extras:
+            assert x.type in apps.EXTRA_TYPES, (package, x)
+            if x.type == "key":
+                assert x.arg in shield_mod.KEYS, (package, x)
+            elif x.type == "dialog":
+                assert x.arg in apps.DIALOGS, (package, x)
+            elif x.type == "action":
+                assert x.arg in apps.ACTIONS, (package, x)
+                assert apps.ACTIONS[x.arg].package == package, (package, x)
+            elif x.type == "channel":
+                assert x.arg in apps.CHANNEL_DIRS, (package, x)
+            else:
+                assert x.arg is None, (package, x)
+        # Search is offered exactly where the app has a search mechanism.
+        assert (apps.SEARCH in app.extras) == (app.search is not None), package
+    for name, act in apps.ACTIONS.items():
+        assert act.same_as is None or act.same_as in media, name
+
+
+def test_newpipe_actions_match_v0_28_8_source():
+    # NotificationConstants.java: BASE_ACTION + ".player.MainPlayer.X" doubles it.
+    assert apps.ACTIONS["newpipe-repeat"].action == "org.schabi.newpipe.player.MainPlayer..player.MainPlayer.REPEAT"
+    assert apps.ACTIONS["newpipe-close"].action == "org.schabi.newpipe.player.MainPlayer.CLOSE"
+
+
+def test_now_extras_for_vlc(client, shield):
+    shield.state = shield_mod.Now(True, "org.videolan.vlc", shield_mod.Media("Film", None, ["rewind"]))
+    extras = client.get("/api/now").json()["extras"]
+    assert extras[0] == {"type": "key", "key": "rewind", "label": "Back 10 s"}
+    assert {"type": "key", "key": "audio-delay-up", "label": "+ 50 ms", "group": "Audio delay"} in extras
+    assert [x["key"] for x in extras] == [
+        "rewind", "fast-forward", "captions", "resize",
+        "audio-delay-down", "audio-delay-up", "subtitle-delay-down", "subtitle-delay-up"]
+
+
+def test_now_extras_for_channel_player_and_newpipe(client, shield):
+    shield.state = shield_mod.Now(True, "com.android.gallery3d", None)
+    assert client.get("/api/now").json()["extras"] == [
+        {"type": "dialog", "name": "channels", "label": "Channels"},
+        {"type": "channel", "dir": "down", "label": "Ch \u2212", "group": "Channel"},
+        {"type": "channel", "dir": "up", "label": "Ch +", "group": "Channel"},
+        {"type": "channel", "dir": "last", "label": "Last", "group": "Channel"},
+    ]
+    shield.state = shield_mod.Now(True, "org.schabi.newpipe", None)
+    extras = client.get("/api/now").json()["extras"]
+    assert {"type": "action", "name": "newpipe-rewind", "label": "Rewind",
+            "group": "Player", "same_as": "rewind"} in extras
+    assert {"type": "action", "name": "newpipe-shuffle", "label": "Shuffle", "group": "Player"} in extras
+
+
+def test_apps_lists_launchable_only(client):
+    listed = client.get("/api/apps").json()
+    assert {"package": "org.videolan.vlc", "label": "VLC"} in listed
+    packages = [a["package"] for a in listed]
+    assert "com.android.gallery3d" not in packages and "com.spocky.projengmenu" not in packages
+    assert len(packages) == 7
+
+
+def test_launch_runs_allowlisted_component(client, shield):
+    r = client.post("/api/launch/org.videolan.vlc")
+    assert r.status_code == 200
+    assert shield.calls == ["start am start -n org.videolan.vlc/.StartActivity"]
+
+
+def test_launch_unknown_or_unlaunchable_is_404(client, shield):
+    assert client.post("/api/launch/com.evil;reboot").status_code == 404
+    assert client.post("/api/launch/com.android.gallery3d").status_code == 404
+    assert shield.calls == []
+
+
+def test_launch_error_is_502(client, shield, caplog):
+    shield.start_error = "am start refused: Error: Activity class does not exist."
+    assert client.post("/api/launch/com.wbd.stream").status_code == 502
+    assert "launch com.wbd.stream FAILED" in caplog.text
+
+
+def test_launch_cross_site_refused(client, shield):
+    assert client.post("/api/launch/org.videolan.vlc", headers={"sec-fetch-site": "cross-site"}).status_code == 403
+    assert shield.calls == []
+
+
+@pytest.mark.parametrize("current,direction,want", [
+    (None, "up", 1), (None, "down", 7), (99, "up", 1),
+    (1, "up", 2), (2, "down", 1), (7, "up", 1), (1, "down", 7),
+])
+def test_next_channel_wraps(current, direction, want):
+    assert web.next_channel([1, 2, 7], current, direction) == want
+
+
+def test_channel_up_from_unknown_then_last(client, shield, modem):
+    r = client.post("/api/channel/up")
+    assert r.status_code == 200 and r.json()["channel"] == 1
+    assert [s["name"] for s in r.json()["steps"]] == ["player stop", "play channel 1"]
+    assert shield.calls == ["stop_player", "play http://dz:8000/video?channel=1"]
+    assert modem.sent == []  # no amp steps
+    assert client.post("/api/channel/up").json()["channel"] == 2
+    assert client.post("/api/channel/up").json()["channel"] == 1  # wraps
+    assert client.post("/api/channel/last").json()["channel"] == 2
+    assert client.post("/api/channel/last").json()["channel"] == 1
+
+
+def test_channel_last_without_previous_is_409(client, shield):
+    r = client.post("/api/channel/last")
+    assert r.status_code == 409 and "previous" in r.json()["detail"]
+    client.post("/api/watch/2")
+    assert client.post("/api/channel/last").status_code == 409  # one channel, no previous
+    assert client.post("/api/channel/down").json()["channel"] == 1  # from the watched channel
+    assert client.post("/api/channel/last").json()["channel"] == 2
+
+
+def test_failed_switch_keeps_the_current_channel(modem, monkeypatch):
+    monkeypatch.setattr(auth, "access_verified", lambda request: True)
+    sh = FakeShield()
+    c = TestClient(web.create_app(modem, sh, FakeSteam(), FakeDizque()))
+    assert c.post("/api/channel/up").json()["channel"] == 1
+    sh.fail = True
+    assert c.post("/api/channel/up").status_code == 502
+    sh.fail = False
+    assert c.post("/api/channel/up").json()["channel"] == 2  # still from 1
+    assert c.post("/api/channel/last").json()["channel"] == 1
+
+
+def test_unknown_channel_direction_is_404(client, shield):
+    assert client.post("/api/channel/sideways").status_code == 404
+    assert shield.calls == []
+
+
+def test_search_newpipe_shares_quoted_text(client, shield, caplog):
+    shield.front_pkg = "org.schabi.newpipe"
+    with caplog.at_level("INFO"):
+        r = client.post("/api/search", json={"text": "'; reboot"})
+    assert r.status_code == 200 and r.json() == {"searched": "NewPipe"}
+    assert shield.calls[-1] == ("start am start -n org.schabi.newpipe/.RouterActivity -a android.intent.action.SEND"
+                                " -t text/plain --es android.intent.extra.TEXT ''\"'\"'; reboot'")
+    assert "reboot" not in caplog.text  # searches stay out of the log
+
+
+@pytest.mark.parametrize("package,url", [
+    ("com.spotify.tv.android", "spotify:search:%27%3B%20reboot%20caf%C3%A9"),
+    ("com.apple.atve.androidtv.appletv", "https://tv.apple.com/search?term=%27%3B%20reboot%20caf%C3%A9"),
+    ("com.wbd.stream", "https://play.max.com/search?q=%27%3B%20reboot%20caf%C3%A9"),
+])
+def test_search_url_apps_encode_the_query(client, shield, package, url):
+    shield.front_pkg = package
+    assert client.post("/api/search", json={"text": "  '; reboot café "}).status_code == 200
+    # A URL with ? or & is shell-quoted as a whole.
+    assert shield.calls[-1] == f"start am start -a android.intent.action.VIEW -d {shlex.quote(url)} -p {package}"
+
+
+def test_search_unicode_reaches_intent_unchanged(client, shield):
+    shield.front_pkg = "org.schabi.newpipe"
+    assert client.post("/api/search", json={"text": "café 東京"}).status_code == 200
+    assert shield.calls[-1].endswith("--es android.intent.extra.TEXT 'café 東京'")
+
+
+def test_search_refuses_control_characters_and_long_text(client, shield):
+    shield.front_pkg = "org.schabi.newpipe"
+    assert client.post("/api/search", json={"text": "a\nreboot"}).status_code == 400
+    assert client.post("/api/search", json={"text": "a" * 201}).status_code == 400
+    assert client.post("/api/search", json={"text": "a" * 200}).status_code == 200
+    assert client.post("/api/search", json={"text": "  "}).status_code == 400
+
+
+def test_search_without_mechanism_is_404(client, shield):
+    shield.front_pkg = "com.plexapp.android"
+    assert client.post("/api/search", json={"text": "dune"}).status_code == 404
+    shield.front_pkg = None
+    assert client.post("/api/search", json={"text": "dune"}).status_code == 404
+    assert not any(c.startswith("start") for c in shield.calls)
+
+
+def test_app_action_needs_player_open(client, shield):
+    r = client.post("/api/app-action/newpipe-repeat")
+    assert r.status_code == 409 and r.json()["detail"] == "NewPipe's player isn't open"
+    assert not any(c.startswith("broadcast") for c in shield.calls)
+    shield.session = True
+    assert client.post("/api/app-action/newpipe-repeat").status_code == 200
+    assert shield.calls[-1] == ("broadcast org.schabi.newpipe.player.MainPlayer..player.MainPlayer.REPEAT"
+                                " org.schabi.newpipe")
+
+
+def test_unknown_app_action_is_404(client, shield):
+    assert client.post("/api/app-action/reboot").status_code == 404
+    assert shield.calls == []
 
 
 PLAYER = {"speed": 1.25, "speeds": [0.5, 1, 1.25, 2], "quality": "auto", "qualities": [1080, 720]}
