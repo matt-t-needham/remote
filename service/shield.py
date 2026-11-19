@@ -6,6 +6,7 @@ power state actually changed, and disconnect. Remote keys (d-pad, OK, Back)
 and typed text reuse one open connection so presses don't each pay for a new handshake; a
 failed press drops it and the next press reconnects.
 """
+import json
 import logging
 import shlex
 import re
@@ -178,6 +179,67 @@ class ShieldError(Exception):
     pass
 
 
+class Refused(ValueError):
+    """The app received the command and said no; its reason is the message."""
+
+
+# Watch (our Materialious fork) answers `am broadcast`s to its remote receiver:
+# result=1 with the player state as JSON, 3 with a short reason, 0 when
+# nothing received it (the app isn't running, or a version without one).
+WATCH = "computer.bix.materialious"
+WATCH_ACTION = "computer.bix.materialious.REMOTE"
+WATCH_SETTINGS = ("speed", "quality")
+BROADCAST_OK, BROADCAST_REFUSED, BROADCAST_UNHEARD = 1, 3, 0
+
+
+def _broadcast(cmd: str, value: str | None = None) -> str:
+    """The `am broadcast` for one Watch remote command; value shell-quoted."""
+    out = f"am broadcast -a {WATCH_ACTION} -p {WATCH} --es cmd {cmd}"
+    return out if value is None else f"{out} --es value {shlex.quote(value)}"
+
+
+def parse_broadcast(out: str) -> tuple[int, str | None]:
+    """The result code and data of `am broadcast`'s output, whose last line is
+    `Broadcast completed: result=<code>[, data="<data>"]`. am escapes nothing
+    in data, so it runs from the first `data="` to the last `"`."""
+    at = out.rfind("Broadcast completed: result=")
+    m = re.match(r"Broadcast completed: result=(-?\d+)", out[at:]) if at >= 0 else None
+    if m is None:
+        raise ShieldError(f"am broadcast: no result in {out[-200:]!r}")
+    tail = out[at:]
+    start = tail.find('data="')
+    if start < 0:
+        return int(m.group(1)), None
+    start += len('data="')
+    end = tail.rfind('"')
+    return int(m.group(1)), tail[start:end] if end >= start else None
+
+
+def watch_state(data: str | None) -> dict:
+    """Watch's state JSON, checked: {"player": False}, or the player's speed,
+    speeds, quality ("auto" or a height) and qualities (heights)."""
+    try:
+        state = json.loads(data or "")
+    except ValueError:
+        raise ShieldError(f"Watch sent unreadable state: {(data or '')[:200]!r}") from None
+    if not isinstance(state, dict) or not isinstance(state.get("player"), bool):
+        raise ShieldError(f"Watch sent unexpected state: {(data or '')[:200]!r}")
+    if not state["player"]:
+        return {"player": False}
+    speed, speeds = state.get("speed"), state.get("speeds")
+    quality, qualities = state.get("quality"), state.get("qualities")
+
+    def number(x) -> bool:
+        return isinstance(x, (int, float)) and not isinstance(x, bool)
+
+    if not (number(speed) and isinstance(speeds, list) and all(number(s) for s in speeds)
+            and (quality == "auto" or isinstance(quality, int) and not isinstance(quality, bool))
+            and isinstance(qualities, list)
+            and all(isinstance(q, int) and not isinstance(q, bool) for q in qualities)):
+        raise ShieldError(f"Watch sent unexpected player state: {data[:200]!r}")
+    return {"player": True, "speed": speed, "speeds": speeds, "quality": quality, "qualities": qualities}
+
+
 class Shield:
     def __init__(self, addr: str, key_path: str):
         host, _, port = addr.partition(":")
@@ -221,6 +283,30 @@ class Shield:
             return Now(awake=False)
         app = front_app(self._shell("dumpsys window | grep -m1 mCurrentFocus"))
         return Now(awake=True, app=app, media=choose_media(self._shell("dumpsys media_session"), app))
+
+    def watch_player(self) -> dict | None:
+        """Watch's player state (see watch_state); None when nothing answered:
+        Watch isn't running, or this version has no remote receiver."""
+        code, data = parse_broadcast(self._shell(_broadcast("state")))
+        if code == BROADCAST_UNHEARD:
+            return None
+        if code != BROADCAST_OK:
+            raise ShieldError(f"Watch didn't give its state (result={code}): {data or 'no reason'}")
+        return watch_state(data)
+
+    def watch_player_set(self, kind: str, value: str) -> None:
+        """Set Watch's playback speed ("1.25") or quality ("auto", "1080").
+        Raises Refused with Watch's reason when it says no (no video playing,
+        a value it doesn't offer)."""
+        if kind not in WATCH_SETTINGS:
+            raise ShieldError(f"no such Watch setting {kind!r}")
+        code, data = parse_broadcast(self._shell(_broadcast(kind, value)))
+        if code == BROADCAST_REFUSED:
+            raise Refused(data or "Watch refused")
+        if code == BROADCAST_UNHEARD:
+            raise ShieldError("Watch isn't running")
+        if code != BROADCAST_OK:
+            raise ShieldError(f"Watch didn't take the {kind} (result={code}): {data or 'no reason'}")
 
     def _keyboard_shown(self) -> bool:
         return "mInputShown=true" in self._input("dumpsys input_method | grep -m1 mInputShown=")

@@ -14,7 +14,7 @@ import config
 import scenes
 from commands import COMMANDS, MAX_STEPS, STEP_GAP
 from modem import Modem, ModemError
-from shield import KEYS, Shield, ShieldError
+from shield import KEYS, WATCH, WATCH_SETTINGS, Refused, Shield, ShieldError
 from steam import Steam, SteamError
 from dizquetv import Dizque, DizqueError
 
@@ -101,7 +101,34 @@ def create_app(modem: Modem, shield: Shield, steam: Steam, dizque: Dizque) -> Fa
             "app": {"package": state.app, "label": entry.label} if entry else None,
             "media": {"title": media.title, "subtitle": media.subtitle, "controls": media.controls} if media else None,
             "extras": list(entry.extras) if entry else [],
+            "player": _watch_player() if state.app == WATCH else None,
         }
+
+    def _watch_player() -> dict | None:
+        """Watch's speed and quality choices while its player is open. Extra
+        detail: a failure leaves them off rather than failing /api/now."""
+        try:
+            player = shield.watch_player()
+        except ShieldError as e:
+            log.warning("couldn't read Watch's player state: %s", e)
+            return None
+        if not player or not player["player"]:
+            return None
+        return {k: player[k] for k in ("speed", "speeds", "quality", "qualities")}
+
+    @app.post("/api/watch-player/{kind}", dependencies=[Depends(auth.require_control)])
+    def watch_player(kind: str, value: str = Query(..., min_length=1, max_length=16)):
+        if kind not in WATCH_SETTINGS:
+            raise HTTPException(status_code=404, detail="no such Watch setting")
+        try:
+            shield.watch_player_set(kind, value)
+        except Refused as e:
+            raise HTTPException(status_code=400, detail=str(e)) from None
+        except ShieldError as e:
+            log.error("Watch %s %r FAILED: %s", kind, value, e)
+            raise HTTPException(status_code=502, detail=str(e)) from None
+        log.info("Watch %s set to %s", kind, value)
+        return {"kind": kind, "value": value}
 
     @app.post("/api/tv/{state}", dependencies=[Depends(auth.require_control)])
     def tv(state: str):

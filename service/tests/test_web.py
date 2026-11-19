@@ -59,6 +59,17 @@ class FakeShield:
         self._do("now")
         return getattr(self, "state", shield_mod.Now(awake=False))
 
+    def watch_player(self):
+        self._do("watch_player")
+        if isinstance(getattr(self, "player", None), Exception):
+            raise self.player
+        return getattr(self, "player", None)
+
+    def watch_player_set(self, kind: str, value: str) -> None:
+        self._do(f"watch {kind} {value}")
+        if getattr(self, "refuse", None):
+            raise shield_mod.Refused(self.refuse)
+
     def is_awake(self) -> bool:
         self._do("is_awake")
         return getattr(self, "awake", False)
@@ -242,6 +253,10 @@ def test_page_served(client):
         assert f'"{name}": "' in r.text
     for extra in apps.EXTRAS:
         assert f"{extra}: {{ label:" in r.text
+    # Watch's player settings, one row per setting the server takes.
+    assert 'fetch("/api/watch-player/" + kind' in r.text
+    for kind in shield_mod.WATCH_SETTINGS:
+        assert f'choices("{kind}", ' in r.text
 
 
 ON, GAME, BD = (0x6DD2, 0xFB04), (0x6DD2, 0xF20D), (0x6CD2, 0x738C)
@@ -535,16 +550,18 @@ def test_now_playing(client, shield):
         "app": {"package": "com.spotify.tv.android", "label": "Spotify"},
         "media": {"title": "Chapter 48", "subtitle": None, "controls": ["rewind", "play-pause"]},
         "extras": ["keyboard"],
+        "player": None,
     }
+    assert "watch_player" not in shield.calls  # only Watch is asked
 
 
 def test_now_unknown_app_and_asleep(client, shield):
     shield.state = shield_mod.Now(True, "com.example.thing", None)
     assert client.get("/api/now").json() == {
         "awake": True, "app": {"package": "com.example.thing", "label": "com.example.thing"},
-        "media": None, "extras": []}
+        "media": None, "extras": [], "player": None}
     shield.state = shield_mod.Now(False)
-    assert client.get("/api/now").json() == {"awake": False, "app": None, "media": None, "extras": []}
+    assert client.get("/api/now").json() == {"awake": False, "app": None, "media": None, "extras": [], "player": None}
 
 
 def test_now_shield_failure_is_502(modem, monkeypatch, caplog):
@@ -565,3 +582,59 @@ def test_now_needs_access(modem, shield, monkeypatch):
 def test_app_extras_are_ones_the_page_renders():
     for package, app in apps.APPS.items():
         assert set(app.extras) <= apps.EXTRAS, package
+
+
+PLAYER = {"speed": 1.25, "speeds": [0.5, 1, 1.25, 2], "quality": "auto", "qualities": [1080, 720]}
+
+
+def test_now_includes_watch_player(client, shield):
+    shield.state = shield_mod.Now(True, shield_mod.WATCH, None)
+    shield.player = {"player": True, **PLAYER}
+    assert client.get("/api/now").json()["player"] == PLAYER
+    shield.player = {"player": False}  # Watch open, no video
+    assert client.get("/api/now").json()["player"] is None
+    shield.player = None  # Watch without a receiver
+    assert client.get("/api/now").json()["player"] is None
+
+
+def test_now_survives_watch_player_failure(client, shield, caplog):
+    shield.state = shield_mod.Now(True, shield_mod.WATCH, shield_mod.Media("Dune", None, ["play-pause"]))
+    shield.player = ShieldError("Watch sent unreadable state: 'x'")
+    r = client.get("/api/now")
+    assert r.status_code == 200
+    assert r.json()["player"] is None and r.json()["media"]["title"] == "Dune"
+    assert [rec.levelname for rec in caplog.records] == ["WARNING"]
+    assert "unreadable state" in caplog.text
+
+
+def test_watch_player_set(client, shield, caplog):
+    with caplog.at_level("INFO"):
+        r = client.post("/api/watch-player/speed?value=1.25")
+    assert r.status_code == 200
+    assert r.json() == {"kind": "speed", "value": "1.25"}
+    assert shield.calls == ["watch speed 1.25"]
+    assert "Watch speed set to 1.25" in caplog.text
+
+
+def test_watch_player_unknown_setting_is_404(client, shield):
+    assert client.post("/api/watch-player/volume?value=3").status_code == 404
+    assert shield.calls == []
+
+
+def test_watch_player_refused_is_400_with_reason(client, shield):
+    shield.refuse = "no video playing"
+    r = client.post("/api/watch-player/quality?value=1080")
+    assert r.status_code == 400 and r.json()["detail"] == "no video playing"
+
+
+def test_watch_player_shield_failure_is_502(modem, monkeypatch, caplog):
+    monkeypatch.setattr(auth, "access_verified", lambda request: True)
+    c = TestClient(web.create_app(modem, FakeShield(fail=True), FakeSteam(), FakeDizque()))
+    assert c.post("/api/watch-player/quality?value=auto").status_code == 502
+    assert "Watch quality 'auto' FAILED" in caplog.text
+
+
+def test_watch_player_cross_site_refused(client, shield):
+    r = client.post("/api/watch-player/speed?value=2", headers={"sec-fetch-site": "cross-site"})
+    assert r.status_code == 403
+    assert shield.calls == []
