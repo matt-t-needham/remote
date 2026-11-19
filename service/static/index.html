@@ -43,18 +43,18 @@
     padding-bottom: 0.5rem;
     border-bottom: 1px solid var(--bix-border, #45475a);
   }
-  #context .bix-label { display: block; margin: 0 0 0.35rem; }
-  #context p { margin: 0; overflow-wrap: anywhere; }
-  #context .title { font-size: 1.05rem; line-height: 1.3; }
-  #context .subtitle, #context .muted { color: var(--bix-text-muted, #a6adc8); line-height: 1.3; }
-  #context .subtitle { font-size: 0.95rem; }
-  #context .muted { font-size: 0.95rem; }
-  #context .app { font-size: 1.35rem; font-weight: 300; margin-bottom: 0.5rem; }
-  #context .warn { color: var(--bix-warn, #f9e2af); font-size: 0.95rem; line-height: 1.3; }
-  #context .row { margin-top: 0.75rem; }
-  #context .row.media { grid-template-columns: repeat(var(--n, 2), 1fr); }
-  #context .row.media button { font-size: 0.95rem; padding: 0 0.25rem; }
-  #context .row.media .wide { order: 1; }
+  .ctx .bix-label { display: block; margin: 0 0 0.35rem; }
+  .ctx p { margin: 0; overflow-wrap: anywhere; }
+  .ctx .title { font-size: 1.05rem; line-height: 1.3; }
+  .ctx .subtitle, .ctx .muted { color: var(--bix-text-muted, #a6adc8); line-height: 1.3; }
+  .ctx .subtitle { font-size: 0.95rem; }
+  .ctx .muted { font-size: 0.95rem; }
+  .ctx .app { font-size: 1.35rem; font-weight: 300; margin-bottom: 0.5rem; }
+  .ctx .warn { color: var(--bix-warn, #f9e2af); font-size: 0.95rem; line-height: 1.3; }
+  .ctx .row { margin-top: 0.75rem; }
+  .ctx .row.media { grid-template-columns: repeat(var(--n, 2), 1fr); }
+  .ctx .row.media button { font-size: 0.95rem; padding: 0 0.25rem; }
+  .ctx .row.media .wide { order: 1; }
   .row { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.6rem; }
   .row .wide { grid-column: 1 / -1; }
   .scenes .row { grid-template-columns: repeat(3, 1fr); }
@@ -213,6 +213,21 @@
     box-sizing: border-box;
   }
   .dpad button { min-height: 0; font-size: 1.2rem; }
+  /* The same app controls as the main page, above the d-pad; the d-pad keeps
+     most of the screen and this scrolls if an app has a lot. */
+  .ctx-remote {
+    flex: none;
+    max-height: 40%;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    width: 100%;
+    max-width: 34rem;
+    margin: 0 auto;
+    padding: 0 1rem 0.75rem;
+    box-sizing: border-box;
+  }
+  .ctx-remote .app { font-size: 1.1rem; margin-bottom: 0.25rem; }
+  .ctx-remote .row { margin-top: 0.5rem; }
   .dpad .k-up     { grid-area: 1 / 3 / 2 / 5; }
   .dpad .k-left   { grid-area: 2 / 1 / 3 / 3; }
   .dpad .k-select { grid-area: 2 / 3 / 3 / 5; }
@@ -282,9 +297,9 @@
     main { max-width: 60rem; padding: calc(1.25rem + env(safe-area-inset-top)) 2rem 0; }
     h1 { margin: 0.75rem 0 1rem; }
     .base { padding-bottom: calc(0.75rem + env(safe-area-inset-bottom)); }
-    #context .app { font-size: 1.6rem; }
-    #context .title { font-size: 1.2rem; }
-    #context .row.media button { font-size: 1.05rem; }
+    .ctx .app { font-size: 1.6rem; }
+    .ctx .title { font-size: 1.2rem; }
+    .ctx .row.media button { font-size: 1.05rem; }
     .scenes button { min-height: 4.5rem; font-size: 1.25rem; }
     button { min-height: 3.75rem; }
     .tiles { padding: 0 2rem 1.5rem; }
@@ -301,7 +316,7 @@
   <div class="bix-site"><a href="https://bix.computer/">bix.computer</a><span class="sep">/</span>remote</div>
   <h1 class="bix-title">Remote<i class="bix-dot">.</i></h1>
 
-  <section id="context" aria-label="On the TV" aria-live="polite">
+  <section id="context" class="ctx" aria-label="On the TV" aria-live="polite">
     <span class="bix-label">On the TV</span>
     <div id="now"><p class="muted">Checking…</p></div>
   </section>
@@ -354,6 +369,9 @@
     <button type="button" class="close" aria-label="Close">&lt;</button>
     <button type="button" class="bar-link" id="open-keyboard" aria-haspopup="dialog" aria-controls="keyboard">Keyboard</button>
   </div>
+  <section class="ctx ctx-remote" aria-label="On the TV" aria-live="polite">
+    <div id="now-remote"><p class="muted">Checking…</p></div>
+  </section>
   <div class="dpad">
     <button class="k-up" data-key="up" data-hold="0" data-repeat="150" data-repeat-delay="400">Up</button>
     <button class="k-left" data-key="left" data-hold="0" data-repeat="150" data-repeat-delay="400">Left</button>
@@ -752,7 +770,12 @@
   // and the app's extras). Polled on load, every 3 s while the page is
   // visible, and shortly after each send. The content is rebuilt only when the
   // reply changes, so a button isn't swapped out under a finger.
-  const nowEl = document.getElementById("now");
+  // Main page, and the Remote Control screen above its d-pad. That screen has
+  // its own Keyboard button in the bar, so it leaves that extra out.
+  const nowTargets = [
+    { el: document.getElementById("now"), skip: [] },
+    { el: document.getElementById("now-remote"), skip: ["keyboard"] },
+  ];
   const MEDIA_LABELS = {
     "previous": "Previous", "rewind": "Rewind", "play-pause": "Play / Pause",
     "fast-forward": "Forward", "next": "Next",
@@ -768,6 +791,10 @@
     return p;
   }
   function renderNow(state) {
+    for (const t of nowTargets) t.el.replaceChildren(...nowParts(state, t.skip));
+  }
+  // Fresh elements per call: each place gets its own bound buttons.
+  function nowParts(state, skip) {
     const parts = [];
     if (state.error !== undefined) {
       parts.push(para("warn", "Can't read the TV: " + state.error));
@@ -796,7 +823,7 @@
         }
         parts.push(row);
       }
-      const known = extras.filter((x) => EXTRAS[x]);
+      const known = extras.filter((x) => EXTRAS[x] && !skip.includes(x));
       if (known.length) {
         const row = document.createElement("div");
         row.className = "row";
@@ -813,7 +840,7 @@
       }
       if (!media && !known.length) parts.push(para("muted", app ? "Nothing to control here." : "No app open."));
     }
-    nowEl.replaceChildren(...parts);
+    return parts;
   }
   let nowBusy = false;
   let nowShown = null;

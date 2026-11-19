@@ -228,6 +228,8 @@ def test_page_served(client):
     # Volume Up and Down only: queued sends, and a tap is one step.
     assert r.text.count(' data-repeat data-repeat-delay="300" data-inflight="2">') == 2
     assert 'id="open-devices"' in r.text
+    # The app's controls show on the main page and above the Remote Control d-pad.
+    assert 'id="now"' in r.text and 'id="now-remote"' in r.text
     for state in ("on", "off"):
         assert f'data-tv="{state}"' in r.text
     assert 'id="open-keyboard"' in r.text and 'fetch("/api/text"' in r.text
